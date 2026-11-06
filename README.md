@@ -1,0 +1,112 @@
+# Listing Studio
+
+A personal project by [Ege Meyvecioğlu](https://github.com/egemeyvecioglu).
+A local browser-based editor for Etsy products and variations. It runs on your
+computer, with no hosted account system. The interface is English, with locale
+files prepared for Turkish support.
+
+The term 'Etsy' is a trademark of Etsy, Inc. This Application uses Etsy's API,
+but is not endorsed or certified by Etsy.
+
+## What it does
+
+- Filter products by search, shop section, category, status, and variation values.
+- Edit one product with its pencil, or select products to edit together.
+- Add variation options with +; rename with the pencil; remove with the trash.
+- Edit variation prices, stock, SKUs, and availability in the inventory table.
+- Update titles, descriptions, tags, materials, and shop sections.
+- Review before/after changes before approving any Etsy update.
+- Keep separate shop connections, saved shortcuts, pending edits, and history.
+- Sync manually or periodically while the local service is running.
+- Prepare restore previews and recover interrupted batches without automatically
+  resuming Etsy writes.
+
+## Windows setup from source
+
+Requires Windows 10/11 and Python 3.10 or newer. Download or clone this repository,
+then run **Setup Windows.cmd** once. It installs the Python dependency and asks
+Windows to trust the local HTTPS certificate for the current user. The certificate
+is generated on that PC; no shared certificate or private key is distributed.
+
+For everyday use, double-click **Start Listing Studio.cmd**. Keep its window open.
+Your browser opens at `https://localhost:8765`.
+
+**Open Listing Studio.cmd** is for an installation that already has a bundled
+`runtime/` folder. The runtime is machine-specific and is not tracked in Git.
+
+## Etsy connection
+
+1. Register an appropriate app in the [Etsy Developer Portal](https://www.etsy.com/developers/).
+   Seller App access is restricted to its registered shop; broader use needs the
+   access Etsy approves for that use case.
+2. Register this exact callback URL in the Etsy app:
+   `https://localhost:8765/oauth/callback`.
+3. Choose **Connect with Etsy** in Listing Studio. Enter your own Keystring and
+   Shared secret locally, then authorize the shop on Etsy.
+4. Wait for the first sync. Inspect real products and variation values before
+   approving an edit. Loading the full inventory of a large shop can take time.
+
+The requested OAuth scopes are `shops_r`, `listings_r`, and `listings_w`.
+Credentials stay in Windows DPAPI-protected storage or macOS Keychain. Windows
+shop data and history are stored in `%LOCALAPPDATA%\EtsyListingStudio`, outside
+the repository. macOS development data uses `.local/`, which is ignored by Git.
+Do not include local data or secrets in issues, screenshots, or commits.
+
+See [official Etsy references](REFERENCES.md) for API and policy sources.
+
+## Updating with Codex
+
+This repository is public: downloading updates does not require a GitHub account.
+An initial Git clone needs Git installed on the computer. Codex can set up that
+checkout and use it for subsequent updates.
+
+Ask Codex:
+
+> Update Listing Studio from https://github.com/egemeyvecioglu/listing-studio.
+> Follow its AGENTS.md. Preserve my existing Etsy connection, local data, and
+> runtime. If this is a ZIP installation, set up a Git checkout first. Start the
+> updated app and verify sample behavior without changing my real Etsy products.
+
+For an existing clean Git checkout, close the running app, use `git pull --ff-only`,
+reopen the launcher, and refresh the browser. Do not overwrite local modifications
+or reset application data to update the code. If dependencies changed, rerun setup.
+There is no unattended updater in this version; updates happen when requested.
+
+## Development and offline checks
+
+```sh
+python -m pip install -r requirements.txt
+python app.py
+```
+
+Open `http://localhost:8765` and choose **Explore a sample shop**. Those products
+are fictional; sample edits cannot update Etsy. Live connections require HTTPS:
+`python app.py --https`. On macOS the generated local certificate needs one-time
+trust; the Windows setup handles trust for the current user.
+
+```sh
+python check_edits.py
+node --check web/app.js
+```
+
+## Current limits and validation
+
+The user has reported a successful Windows connection and listing sync. The new
+direct-edit interface has been checked in a browser with sample products, and
+focused offline edit checks pass. Real Etsy writes and the revised Windows
+interface still need validation on the receiving PC.
+
+- No image generation, image editing, new listing creation, personalization
+  editing, or fulfillment-provider synchronization yet.
+- Existing variation types can be managed. Adding an entirely new variation
+  dimension or arbitrary new values on Etsy's size scales is not implemented.
+- Clothing type and size combined into one option remain combined; the editor
+  does not guess how to split them.
+- Etsy offers no transaction across the whole batch. Updates are journaled and
+  checked, but another Etsy client can change a listing between check and write.
+- Restore is a new reviewed update, not a reversal of Etsy history or external
+  fulfillment changes. Etsy-assigned identifiers may differ after restoration.
+- Automatic sync defaults to 15 minutes and runs only while the local service is
+  running. Actual shop size and API quota determine a suitable interval.
+- Source code availability does not grant Etsy API access. Each installation
+  needs its owner's approved credentials and authorized shop access.

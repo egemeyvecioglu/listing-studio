@@ -1,0 +1,25 @@
+# Local credentials, certificates, listing data and caches
+.local/
+.env
+.env.*
+!.env.example
+*.sqlite3*
+*.db
+*.key
+*.crt
+*.pem
+*.pfx
+*.p12
+*.log
+
+# Machine-specific runtimes and generated files
+.venv/
+venv/
+runtime/
+__pycache__/
+*.pyc
+.DS_Store
+work/
+dist/
+build/
+*.zip

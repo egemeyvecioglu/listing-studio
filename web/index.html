@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#244b3c">
+  <title>Listing Studio</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a href="/" class="brand"><span class="brand-mark">✳</span> Listing Studio<span class="local-pill" data-i18n="LOCAL">LOCAL</span></a>
+    <div class="workspace-label" data-i18n="WORKSPACE">WORKSPACE</div>
+    <nav aria-label="Main navigation">
+      <button class="nav-item active" data-page="products"><span>▦</span><span data-i18n="Products">Products</span><span id="nav-count" class="nav-count">0</span></button>
+      <button class="nav-item" data-page="presets"><span>☆</span><span data-i18n="Saved edits">Saved edits</span></button>
+      <button class="nav-item" data-page="activity"><span>◷</span><span data-i18n="Activity">Activity</span><span id="attention-dot"></span></button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="safe-note"><span class="small-check">✓</span><div><strong data-i18n="You stay in control">You stay in control</strong><p data-i18n="Every change gets a preview before it reaches Etsy.">Every change gets a preview before it reaches Etsy.</p></div></div>
+      <button class="nav-item" id="settings-button"><span>⚙</span><span data-i18n="Settings & connections">Settings & connections</span></button>
+      <small data-i18n="Made for the way you work.">Made for the way you work.</small>
+    </div>
+  </aside>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="shop-control"><span id="shop-avatar" class="avatar">LS</span><label class="sr-only" for="shop-select" data-i18n="Selected shop">Selected shop</label><select id="shop-select"><option data-i18n="Choose your shop">Choose your shop</option></select><span id="shop-mode" class="badge"></span></div>
+      <div class="sync-control"><span id="sync-status" aria-live="polite"></span><button id="sync-button" class="button quiet"><span class="sync-icon">↻</span><span data-i18n="Sync now">Sync now</span></button></div>
+    </header>
+    <div id="global-error" class="notice danger hidden" role="alert"></div>
+    <main id="main" tabindex="-1"></main>
+    <footer class="app-footer"><span data-i18n="Your work stays on this computer.">Your work stays on this computer.</span><span data-i18n="Connected to Etsy, designed around you.">Connected to Etsy, designed around you.</span></footer>
+  </div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <dialog id="dialog"><div id="dialog-content"></div></dialog>
+</body>
+</html>
