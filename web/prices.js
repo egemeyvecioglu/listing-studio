@@ -85,7 +85,7 @@ document.addEventListener('input',event=>{
   if(!g||!n.value||!Number.isFinite(value)||value<=0)return;
   stageGroupPrices([g],'set',value);
   // Keep the active field in place while typing; Review is available immediately.
-  for(const b of document.querySelectorAll('[data-action="preview"]')){b.disabled=busy;b.textContent=t('Review changes ({count})',{count:rules.length});}
+  for(const b of document.querySelectorAll('[data-action="preview"]')){b.disabled=false;b.textContent=t('Review changes ({count})',{count:rules.length});}
   const count=document.querySelector('.pending-panel .chip');if(count)count.textContent=rules.length;
  }
 });

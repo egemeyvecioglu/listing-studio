@@ -14,7 +14,7 @@ import urllib.parse
 import webbrowser
 
 from engine import ReviewError, fingerprint
-from service import Service
+from service import Service, TaskBusy
 from storage import Store, data_directory
 
 WEB = Path(__file__).parent / "web"
@@ -92,8 +92,11 @@ def server_for(service, port, secure=False):
                 return self.send(401, {"error": "Open the application again to continue."})
             try:
                 if path == "/oauth/callback":
-                    with service.operation:
+                    service.begin_task("Connecting your Etsy shop…")
+                    try:
                         service.auth_finish(urllib.parse.parse_qs(parsed.query))
+                    finally:
+                        service.end_task()
                     return self.send(200, "<!doctype html><html lang=en><meta charset=utf-8><title>Shop connected</title><link rel=stylesheet href=/style.css><main class=callback><h1>Your shop is connected.</h1><p>You can return to the studio. Your products will sync automatically.</p><a class=button href=/>Open Listing Studio</a></main></html>", "text/html")
                 if path == "/api/state":
                     return self.send(200, {**service.state(), "csrf": csrf})
@@ -113,6 +116,8 @@ def server_for(service, port, secure=False):
                 if ext not in (".js", ".css", ".json", ".svg"):
                     return self.send(404, {"error": "This file is not public."})
                 return self.send(200, target.read_bytes(), {".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml"}[ext])
+            except TaskBusy as exc:
+                return self.send(409, {"error": str(exc), "code": "TASK_BUSY", "task": exc.task})
             except (ReviewError, ValueError, TypeError, KeyError) as exc:
                 if path == "/oauth/callback":
                     # Static error text avoids reflecting query content as HTML.
@@ -134,24 +139,24 @@ def server_for(service, port, secure=False):
                 if not isinstance(data, dict):
                     raise ReviewError("This request could not be read.")
                 path = urllib.parse.urlsplit(self.path).path
-                if path in ("/api/image-gallery", "/api/image-review", "/api/image-upload"):
-                    if not service.operation.acquire(False):
-                        raise ReviewError("Another task is running. Wait for it to finish, then try again.")
+                if path == "/api/image-gallery":
+                    service.begin_task("Loading listing images from Etsy…")
                     try:
-                        if path == "/api/image-gallery":
-                            result = {"galleries": service.images.gallery(str(data["shop_id"]), data["listing_ids"])}
-                        elif path == "/api/image-upload":
-                            try:
-                                raw = base64.b64decode(data["content"], validate=True)
-                            except (ValueError, TypeError):
-                                raise ReviewError("This image could not be read. Choose the file again.")
-                            result = service.images.upload(str(data["shop_id"]), str(data["name"]), raw)
-                        else:
-                            batch = service.images.review(data)
-                            result = {"batch": batch, "approval": fingerprint(batch)}
+                        result = {"galleries": service.images.gallery(str(data["shop_id"]), data["listing_ids"])}
                         service.touch()
                     finally:
-                        service.operation.release()
+                        service.end_task()
+                elif path == "/api/image-upload":
+                    try:
+                        raw = base64.b64decode(data["content"], validate=True)
+                    except (ValueError, TypeError):
+                        raise ReviewError("This image could not be read. Choose the file again.")
+                    result = service.images.upload(str(data["shop_id"]), str(data["name"]), raw)
+                    service.touch()
+                elif path == "/api/image-review":
+                    with service.store.lock:
+                        batch = service.images.review(data)
+                        result = {"batch": batch, "approval": fingerprint(batch)}
                 elif path == "/api/sample":
                     service.sample()
                     result = {"ok": True}
@@ -163,13 +168,11 @@ def server_for(service, port, secure=False):
                     service.start_sync(str(data["shop_id"]) if data.get("shop_id") else None)
                     result = {"ok": True}
                 elif path == "/api/preview":
-                    if not service.operation.acquire(False):
-                        raise ReviewError("Wait for the current task to finish before preparing a review.")
-                    try:
+                    # Local calculation only. Sync replaces its cache atomically;
+                    # keep a consistent snapshot without blocking on network work.
+                    with service.store.lock:
                         batch = service.build_review(data)
                         result = {"batch": batch, "approval": fingerprint(batch)}
-                    finally:
-                        service.operation.release()
                 elif path == "/api/apply":
                     service.apply(str(data["id"]), data.get("approval"), data.get("dependency_approvals"))
                     result = {"ok": True}
@@ -215,6 +218,8 @@ def server_for(service, port, secure=False):
                 else:
                     return self.send(404, {"error": "This action could not be found."})
                 return self.send(200, result)
+            except TaskBusy as exc:
+                return self.send(409, {"error": str(exc), "code": "TASK_BUSY", "task": exc.task})
             except (ReviewError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
                 return self.send(400, {"error": str(exc)})
             except Exception:

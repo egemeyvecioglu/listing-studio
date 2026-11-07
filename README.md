@@ -26,6 +26,8 @@ but is not endorsed or certified by Etsy.
 - Review before/after changes before approving any Etsy update.
 - Keep separate shop connections, saved shortcuts, pending edits, and history.
 - Sync manually or periodically while the local service is running.
+- Prepare local reviews during sync. Etsy saves wait until the named task
+  finishes; pending saves are never automatically queued.
 - Prepare restore previews and recover interrupted batches without automatically
   resuming Etsy writes.
 
@@ -96,6 +98,7 @@ trust; the Windows setup handles trust for the current user.
 python check_edits.py
 python check_images.py
 python check_review.py
+python check_tasks.py
 node --check web/app.js
 node --check web/images.js
 node check_prices.js

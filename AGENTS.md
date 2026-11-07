@@ -36,4 +36,5 @@ company credentials, company code, or company infrastructure for this project.
   and `node --check web/images.js`. Distinguish sample checks from real Etsy tests.
 - For grouped price changes, run `node check_prices.js` and `python check_edits.py`.
 - For review or dependency changes, run `python check_review.py` and `node --check web/review.js`.
+- For task coordination changes, run `python check_tasks.py` (local HTTP/sample only).
 - Never commit or push changes unless the user requests publication.

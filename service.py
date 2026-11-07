@@ -17,6 +17,12 @@ from storage import Vault
 API = "https://api.etsy.com/v3"
 
 
+class TaskBusy(ReviewError):
+    def __init__(self, task):
+        self.task = task or "Another shop operation"
+        super().__init__("A shop operation is still running. Your saved work is preserved.")
+
+
 class EtsyError(ReviewError):
     pass
 
@@ -124,11 +130,21 @@ class Service:
         with self.status_lock:
             self.status["revision"] += 1
 
-    def background(self, message, fn):
-        if not self.operation.acquire(False):
-            raise ReviewError("Another task is running. Please wait for it to finish.")
+    def begin_task(self, message):
         with self.status_lock:
-            self.status.update(busy=True, message=message, error="")
+            if not self.operation.acquire(False):
+                raise TaskBusy(self.status["message"])
+            self.status.update(busy=True, message=message, error="", started_at=time.time())
+            self.status["revision"] += 1
+
+    def end_task(self):
+        with self.status_lock:
+            self.status.update(busy=False, message="", started_at=None)
+            self.status["revision"] += 1
+            self.operation.release()
+
+    def background(self, message, fn):
+        self.begin_task(message)
 
         def run():
             try:
@@ -137,11 +153,12 @@ class Service:
                 with self.status_lock:
                     self.status["error"] = str(exc) if isinstance(exc, (ReviewError, ValueError)) else "The task stopped unexpectedly. Your saved review is preserved."
             finally:
-                with self.status_lock:
-                    self.status.update(busy=False, message="")
-                self.touch()
-                self.operation.release()
-        threading.Thread(target=run, daemon=True).start()
+                self.end_task()
+        try:
+            threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            self.end_task()
+            raise
 
     def state(self):
         shops = self.store.all("shop")
