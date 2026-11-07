@@ -153,13 +153,31 @@ def preview(before, rules, filters=None):
         if kind not in ("price", "quantity", "sku", "enabled", "option"):
             raise ReviewError("Choose a supported change.")
         found = 0
+        sources = None
+        if kind == "option" and rule.get("mode") == "copy" and rule.get("auto_source"):
+            # Use each listing's own combinations; a global source value may
+            # be absent for some colors/sizes, and existing targets stay intact.
+            groups = {}
+            prop_id = int(rule.get("property_id", 0))
+            for pi, product in enumerate(before["inventory"]["products"]):
+                prop = next((p for p in product["property_values"] if p["property_id"] == prop_id), None)
+                if prop is not None and matches(product, filters):
+                    key = json.dumps([(p["property_id"], p.get("scale_id"), p.get("values", [])) for p in product["property_values"] if p["property_id"] != prop_id], sort_keys=True)
+                    groups.setdefault(key, []).append((pi, prop))
+            sources = set()
+            for candidates in groups.values():
+                if any(rule.get("value") in prop.get("values", []) for _, prop in candidates):
+                    found += 1
+                    continue
+                source = next((pi for pi, prop in candidates if rule.get("old") in prop.get("values", [])), candidates[0][0])
+                sources.add(source)
         for pi, product in enumerate(before["inventory"]["products"]):
             if not matches(product, filters):
                 continue
             if kind == "option":
                 prop_id = int(rule.get("property_id", 0))
                 prop = next((p for p in product["property_values"] if p["property_id"] == prop_id), None)
-                if prop is None or rule.get("old") not in prop.get("values", []):
+                if prop is None or (pi not in sources if sources is not None else rule.get("old") not in prop.get("values", [])):
                     continue
                 found += 1
                 new_summary = "Remove combination" if rule.get("mode") == "remove" else {"Option": rule.get("value"), "Price": rule.get("price") if rule.get("price") not in (None, "") else product["offerings"][0]["price"], "Stock": rule.get("quantity") if rule.get("quantity") not in (None, "") else product["offerings"][0]["quantity"]}

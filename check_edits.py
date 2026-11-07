@@ -37,7 +37,39 @@ def main():
         restored = service.restore_review(batch['id'])
         service.apply_batch(restored['id'])
         assert fingerprint(service.store.get('listing', rows[0]['listing_id'])['snapshot']) == fingerprint(before)
-        print('Direct-edit safety check passed: additions, prices/stock targeting, conflict checks, product scope, repeat save and restore.')
+        # Batch additions use each listing's own option combinations, including
+        # a source missing in some colors and an already-existing target.
+        batch_rows = rows[:3]
+        for n, row in enumerate(batch_rows):
+            row['snapshot'] = copy.deepcopy(before)
+            items = row['snapshot']['inventory']['products']
+            if n == 0:
+                # The preferred source is absent for one color.
+                items[:] = [p for p in items if not (p['property_values'][0]['values'] == ['T-shirt / M'] and p['property_values'][1]['values'] == ['Ivory'])]
+            if n == 1:
+                for product in items:
+                    product['property_values'][0]['values'] = [product['property_values'][0]['values'][0].replace('T-shirt', 'Different tee')]
+                    product['property_values'][1]['values'] = ['Unique ' + product['property_values'][1]['values'][0]]
+            if n == 2:
+                existing = copy.deepcopy(items[0])
+                existing['property_values'][0]['values'] = ['Hoodie / M']
+                items.append(existing)
+            service.store.put('listing', row['listing_id'], row)
+        bulk_rules = [{'kind':'option', 'mode':'copy', 'auto_source':True, 'property_id':'513', 'old':'T-shirt / M', 'value':name, 'price':39, 'quantity':10, 'filters':{}} for name in ['Hoodie / M', 'Hoodie / L']]
+        bulk = service.build_review({'shop_id':'sample', 'listing_ids':[r['listing_id'] for r in batch_rows], 'rules':bulk_rules})
+        for item in bulk['items']:
+            assert item['status'] == 'ready', item.get('error')
+            original = item['before']['inventory']['products']
+            result = item['after']['inventory']['products']
+            colors = {p['property_values'][1]['values'][0] for p in original}
+            assert all(p in result for p in original), 'Existing options were changed'
+            for name in ['Hoodie / M', 'Hoodie / L']:
+                added = [p for p in result if p['property_values'][0]['values'] == [name]]
+                assert len(added) == len(colors)
+                assert {p['property_values'][1]['values'][0] for p in added} == colors
+            _, repeated_changes = preview(item['after'], service.resolve_rules({'snapshot':item['after']}, bulk_rules, service.shop('sample')))
+            assert not repeated_changes, 'Existing new options should not be duplicated'
+        print('Direct-edit safety check passed: additions, prices/stock targeting, conflict checks, product scope, repeat save, restore, and batch additions across different style/color combinations.')
 
 
 if __name__ == '__main__':
