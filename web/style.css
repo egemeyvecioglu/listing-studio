@@ -10,3 +10,6 @@
 .price-group-controls fieldset{border:0;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:12px}.price-group-controls legend{font-weight:600;margin-bottom:10px}.price-group-controls label{display:flex;align-items:center;gap:7px;font-size:13px}.group-price-input{min-width:110px;max-width:150px}.group-price-input+.pending-tag{display:block;margin-top:5px}
 
 .grouped-price-table .product-subtitle{display:block;margin-top:4px}
+.addition-summary,.dependency-review{padding:20px 24px;border-top:1px solid var(--line)}.addition-summary{background:#f3f8ee}.addition-summary h3,.dependency-review h3{font-size:14px;margin:0 0 12px}.addition-summary p,.dependency-review p{font-size:12px;line-height:1.7}.dependency-review{background:#fffaf0}.dependency-row{padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:12px}.dependency-review>label{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.6}.dependency-review input{margin-top:5px;flex-shrink:0}
+
+.review-combinations>summary{padding:16px 24px;cursor:pointer;font-size:12px}.review-combinations{border-top:1px solid var(--line)}

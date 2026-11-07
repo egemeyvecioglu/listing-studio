@@ -20,6 +20,9 @@ but is not endorsed or certified by Etsy.
 - Add JPG/PNG images at the beginning or end of selected galleries.
 - Remove individual images with the trash, or the first/last N images in bulk.
 - Preview image order and the cover before approving any Etsy update.
+- Review additions as Added / Not present, with a color-count summary per option.
+- Review required variation-setting changes separately; each affected product
+  needs separate consent before saving. Unchanged settings are preserved.
 - Review before/after changes before approving any Etsy update.
 - Keep separate shop connections, saved shortcuts, pending edits, and history.
 - Sync manually or periodically while the local service is running.
@@ -92,10 +95,12 @@ trust; the Windows setup handles trust for the current user.
 ```sh
 python check_edits.py
 python check_images.py
+python check_review.py
 node --check web/app.js
 node --check web/images.js
 node check_prices.js
 node --check web/prices.js
+node --check web/review.js
 ```
 
 ## Current limits and validation

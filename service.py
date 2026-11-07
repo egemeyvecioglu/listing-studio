@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from engine import LISTING_FIELDS, ReviewError, fingerprint, partial_snapshot, preview, snapshot
+from engine import changed_dependencies, LISTING_FIELDS, ReviewError, fingerprint, partial_snapshot, preview, snapshot
 from storage import Vault
 
 API = "https://api.etsy.com/v3"
@@ -337,18 +337,30 @@ class Service:
             raise ReviewError("This review could not be found.")
         return batch
 
-    def apply(self, batch_id, approval):
+    def apply(self, batch_id, approval, dependency_approvals=None):
         batch = self.batch(batch_id)
         if approval != fingerprint(batch):
             raise ReviewError("The review changed. Open it again and approve the latest version.")
         if batch["status"] == "discarded":
             raise ReviewError("This review was discarded. Prepare a new review.")
-        self.background("Applying approved changes…", lambda: self.apply_batch(batch_id))
+        self.check_dependency_approval(batch, dependency_approvals)
+        self.background("Applying approved changes…", lambda: self.apply_batch(batch_id, dependency_approvals))
 
-    def apply_batch(self, batch_id):
+    def check_dependency_approval(self, batch, approved):
+        if batch.get("type") == "images":
+            return
+        if not isinstance(approved, (list, tuple, type(None))):
+            raise ReviewError("Review the required stock and SKU setting changes separately.")
+        allowed = set(str(lid) for lid in (approved or []))
+        for item in batch["items"]:
+            if item["status"] in ("ready", "failed", "uncertain", "interrupted") and changed_dependencies(item["before"], item["after"]) and item["listing_id"] not in allowed:
+                raise ReviewError("Choose whether to allow the required variation setting changes for each product, or return to editing to keep its current settings.")
+
+    def apply_batch(self, batch_id, dependency_approvals=None):
         batch = self.batch(batch_id)
         if batch.get("type") == "images":
             return self.images.apply(batch)
+        self.check_dependency_approval(batch, dependency_approvals)
         shop = self.shop(batch["shop_id"])
         batch["status"] = "applying"
         self.store.put("batch", batch_id, batch)
@@ -426,7 +438,7 @@ class Service:
         for item in original["items"]:
             if item["status"] != "complete":
                 continue
-            changes = [{"label": c["label"], "before": c["after"], "after": c["before"]} for c in item["changes"]]
+            changes = [{**copy.deepcopy(c), "before": c["after"], "after": c["before"], "kind": "removed" if c.get("kind") == "added" else "added" if c.get("kind") == "removed" else c.get("kind", "updated")} for c in item["changes"]]
             batch["items"].append({"listing_id": item["listing_id"], "title": item["title"], "before": item.get("verified", item["after"]), "after": item["before"], "changes": changes, "status": "ready", "error": "", "fields_done": False, "inventory_done": False})
         if not batch["items"]:
             raise ReviewError("There are no completed changes to restore.")

@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+from itertools import combinations
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
@@ -182,7 +183,9 @@ def preview(before, rules, filters=None):
                 structure_path = "product." + str(pi) + ".structure"
                 if rule.get("mode") == "copy":
                     structure_path += ".copy." + str(rule.get("value"))
-                record(structure_path, label(product), prop.get("values"), new_summary)
+                record(structure_path, label(product), None if rule.get("mode") == "copy" else prop.get("values"), new_summary)
+                if rule.get("mode") == "copy":
+                    changes[-1].update(kind="added", option=str(rule.get("value")), colors=[v for p in product["property_values"] if "color" in p.get("property_name", "").lower() and p["property_id"] != prop_id for v in p.get("values", [])], label=" / ".join(str(rule.get("value")) if p["property_id"] == prop_id else ", ".join(p.get("values", [])) for p in product["property_values"]))
                 target = after["inventory"]["products"][pi]
                 if rule.get("mode") == "remove":
                     target["_remove"] = True
@@ -194,7 +197,7 @@ def preview(before, rules, filters=None):
                         # Copy from the original; reject overlaps with edits to this source.
                         target = copy.deepcopy(product)
                         target["_new"] = True
-                        target["sku"] = str(rule.get("sku", ""))
+                        target["sku"] = str(rule["sku"]) if rule.get("sku") else product["sku"]
                         for o in target["offerings"]:
                             if rule.get("price") not in (None, ""):
                                 o["price"] = float(decimal(rule["price"]).quantize(Decimal(".01"), rounding=ROUND_HALF_UP))
@@ -282,17 +285,35 @@ def repair_dependencies(inventory, changes):
     dimensions = sorted({p["property_id"] for product in products for p in product["property_values"]})
     for field, dependency in (("price", "price_on_property"), ("quantity", "quantity_on_property"), ("sku", "sku_on_property"), ("readiness_state_id", "readiness_state_on_property")):
         current = inventory.get(dependency) or []
-        groups, inconsistent = {}, False
-        for product in products:
-            key = json.dumps([(p["property_id"], p["values"]) for p in product["property_values"] if p["property_id"] in current], sort_keys=True)
-            value = product["sku"] if field == "sku" else [o.get(field) for o in product["offerings"]]
-            if key in groups and groups[key] != value:
-                inconsistent = True
-            groups[key] = value
-        if inconsistent or (len(dimensions) == 3 and len(current) == 2):
-            inventory[dependency] = dimensions
-            if changes is not None and current != dimensions:
-                changes.append({"label": field.replace("_", " ").title() + " varies by", "before": current, "after": dimensions})
+        def consistent(dependencies):
+            groups = {}
+            for product in products:
+                key = json.dumps([(p["property_id"], p["values"]) for p in product["property_values"] if p["property_id"] in dependencies], sort_keys=True)
+                value = product["sku"] if field == "sku" else [o.get(field) for o in product["offerings"]]
+                if key in groups and groups[key] != value:
+                    return False
+                groups[key] = value
+            return True
+        needs_three = len(dimensions) == 3 and len(current) == 2
+        if not consistent(current) or needs_three:
+            # Preserve current dependencies and add only the dimensions needed
+            # to represent the requested values without modifying existing rows.
+            remaining = [d for d in dimensions if d not in current]
+            target = dimensions
+            if not needs_three:
+                for count in range(1, len(remaining) + 1):
+                    candidate = next((sorted(current + list(extra)) for extra in combinations(remaining, count) if consistent(current + list(extra))), None)
+                    if candidate is not None:
+                        target = candidate
+                        break
+            inventory[dependency] = target
+            if changes is not None and current != target:
+                changes.append({"kind": "dependency", "dependency": dependency, "label": field.replace("_", " ").title() + " varies by", "before": current, "after": target, "reason": "The requested values differ between combinations that currently share this setting." if not needs_three else "This three-variation inventory requires the setting to include all three variation types."})
+
+
+def changed_dependencies(before, after):
+    return [key for key in DEPENDENCIES if (before.get("inventory", {}).get(key) or []) != (after.get("inventory", {}).get(key) or [])]
+
 
 
 def validate_inventory(inventory):

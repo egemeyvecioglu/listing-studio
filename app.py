@@ -171,7 +171,7 @@ def server_for(service, port, secure=False):
                     finally:
                         service.operation.release()
                 elif path == "/api/apply":
-                    service.apply(str(data["id"]), data.get("approval"))
+                    service.apply(str(data["id"]), data.get("approval"), data.get("dependency_approvals"))
                     result = {"ok": True}
                 elif path == "/api/restore":
                     batch = service.restore_review(str(data["id"]))
