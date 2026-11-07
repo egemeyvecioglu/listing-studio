@@ -23,7 +23,9 @@ class EtsyError(ReviewError):
 
 def request_json(url, method="GET", data=None, headers=None, form=False):
     headers = dict(headers or {})
-    if data is not None:
+    if isinstance(data, bytes):
+        payload = data
+    elif data is not None:
         if form:
             pairs = []
             for k, v in data.items():
@@ -67,7 +69,7 @@ class Etsy:
         self.service, self.shop_id = service, str(shop_id)
         self.next_request = 0
 
-    def request(self, path, method="GET", data=None, form=False):
+    def request(self, path, method="GET", data=None, form=False, content_type=None):
         account = self.service.vault.get("account:" + self.shop_id)
         if not account:
             raise EtsyError("Reconnect this shop to continue.")
@@ -80,7 +82,10 @@ class Etsy:
         if delay > 0:
             time.sleep(delay)
         self.next_request = time.monotonic() + 0.55
-        result, headers = request_json(API + "/application" + path, method, data, {"x-api-key": account["key"] + ":" + account["secret"], "Authorization": "Bearer " + account["access_token"]}, form)
+        request_headers = {"x-api-key": account["key"] + ":" + account["secret"], "Authorization": "Bearer " + account["access_token"]}
+        if content_type:
+            request_headers["Content-Type"] = content_type
+        result, headers = request_json(API + "/application" + path, method, data, request_headers, form)
         # Respect the actual allocated quota, rather than docs' example numbers.
         limit = headers.get("x-limit-per-second") or headers.get("X-Limit-Per-Second")
         if limit:
@@ -102,6 +107,8 @@ class Service:
     def __init__(self, store, callback, live_enabled=False, vault=None):
         self.store, self.callback, self.live_enabled = store, callback, live_enabled
         self.vault = vault or Vault(store)
+        from image_edits import ImageEdits
+        self.images = ImageEdits(self)
         self.operation = threading.Lock()
         self.status_lock = threading.RLock()
         self.status = {"busy": False, "message": "", "revision": 0, "error": ""}
@@ -340,6 +347,8 @@ class Service:
 
     def apply_batch(self, batch_id):
         batch = self.batch(batch_id)
+        if batch.get("type") == "images":
+            return self.images.apply(batch)
         shop = self.shop(batch["shop_id"])
         batch["status"] = "applying"
         self.store.put("batch", batch_id, batch)
@@ -411,6 +420,8 @@ class Service:
 
     def restore_review(self, batch_id):
         original = self.batch(batch_id)
+        if original.get("type") == "images":
+            raise ReviewError("Image changes cannot be undone with the inventory restore button. Keep original files; use the Images tab to add them again if needed.")
         batch = {**copy.deepcopy(original), "id": str(uuid.uuid4()), "created_at": time.time(), "status": "review", "label": "Restore · " + original["label"], "restore_of": original["id"], "items": []}
         for item in original["items"]:
             if item["status"] != "complete":

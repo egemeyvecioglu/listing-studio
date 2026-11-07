@@ -1,5 +1,6 @@
 """Local-only HTTP(S) app. No Etsy write happens outside an approved batch."""
 import argparse
+import base64
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -98,6 +99,10 @@ def server_for(service, port, secure=False):
                     return self.send(200, {**service.state(), "csrf": csrf})
                 if path == "/api/status":
                     return self.send(200, service.status)
+                if path == "/api/image-file":
+                    key = urllib.parse.parse_qs(parsed.query).get("id", [""])[0]
+                    raw, content_type = service.images.file(key)
+                    return self.send(200, raw, content_type)
                 if path == "/api/batch":
                     batch = service.batch(urllib.parse.parse_qs(parsed.query).get("id", [""])[0])
                     return self.send(200, {"batch": batch, "approval": fingerprint(batch)})
@@ -121,13 +126,33 @@ def server_for(service, port, secure=False):
                 return self.send(403, {"error": "Open the app again before making changes."})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 2 * 1024 * 1024 or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                upload = urllib.parse.urlsplit(self.path).path == "/api/image-upload"
+                limit = 28 * 1024 * 1024 if upload else 2 * 1024 * 1024
+                if not 0 < length <= limit or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                     return self.send(400, {"error": "This request could not be read."})
                 data = json.loads(self.rfile.read(length))
                 if not isinstance(data, dict):
                     raise ReviewError("This request could not be read.")
                 path = urllib.parse.urlsplit(self.path).path
-                if path == "/api/sample":
+                if path in ("/api/image-gallery", "/api/image-review", "/api/image-upload"):
+                    if not service.operation.acquire(False):
+                        raise ReviewError("Another task is running. Wait for it to finish, then try again.")
+                    try:
+                        if path == "/api/image-gallery":
+                            result = {"galleries": service.images.gallery(str(data["shop_id"]), data["listing_ids"])}
+                        elif path == "/api/image-upload":
+                            try:
+                                raw = base64.b64decode(data["content"], validate=True)
+                            except (ValueError, TypeError):
+                                raise ReviewError("This image could not be read. Choose the file again.")
+                            result = service.images.upload(str(data["shop_id"]), str(data["name"]), raw)
+                        else:
+                            batch = service.images.review(data)
+                            result = {"batch": batch, "approval": fingerprint(batch)}
+                        service.touch()
+                    finally:
+                        service.operation.release()
+                elif path == "/api/sample":
                     service.sample()
                     result = {"ok": True}
                 elif path == "/api/setup":

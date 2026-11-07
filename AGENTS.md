@@ -32,5 +32,6 @@ company credentials, company code, or company infrastructure for this project.
 - Maintain shop isolation, full inventory preservation, review-before-write,
   conflict checks, interrupted-batch recovery, and explicit restore previews.
 - Keep tests focused. Run `python check_edits.py` and `node --check web/app.js`
-  for changes to the edit paths. Distinguish sample checks from real Etsy tests.
+  for changes to the edit paths. For galleries, also run `python check_images.py`
+  and `node --check web/images.js`. Distinguish sample checks from real Etsy tests.
 - Never commit or push changes unless the user requests publication.

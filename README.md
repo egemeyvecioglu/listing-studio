@@ -15,6 +15,9 @@ but is not endorsed or certified by Etsy.
 - Add variation options with +; rename with the pencil; remove with the trash.
 - Edit variation prices, stock, SKUs, and availability in the inventory table.
 - Update titles, descriptions, tags, materials, and shop sections.
+- Add JPG/PNG images at the beginning or end of selected galleries.
+- Remove individual images with the trash, or the first/last N images in bulk.
+- Preview image order and the cover before approving any Etsy update.
 - Review before/after changes before approving any Etsy update.
 - Keep separate shop connections, saved shortcuts, pending edits, and history.
 - Sync manually or periodically while the local service is running.
@@ -86,18 +89,24 @@ trust; the Windows setup handles trust for the current user.
 
 ```sh
 python check_edits.py
+python check_images.py
 node --check web/app.js
+node --check web/images.js
 ```
 
 ## Current limits and validation
 
 The user has reported a successful Windows connection and listing sync. The new
 direct-edit interface has been checked in a browser with sample products, and
-focused offline edit checks pass. Real Etsy writes and the revised Windows
+focused offline edit and gallery checks pass. Gallery additions, removals, cover
+order, and approval were checked with sample data. Real Etsy writes and the revised Windows
 interface still need validation on the receiving PC.
 
-- No image generation, image editing, new listing creation, personalization
+- No image generation, image retouching, new listing creation, personalization
   editing, or fulfillment-provider synchronization yet.
+- Galleries support up to 20 images. Images linked to variations cannot be
+  removed here. Image removals have no in-app restore; keep the original files.
+  An uncertain upload is blocked from automatic retry to avoid duplicates.
 - Existing variation types can be managed. Adding an entirely new variation
   dimension or arbitrary new values on Etsy's size scales is not implemented.
 - Clothing type and size combined into one option remain combined; the editor
