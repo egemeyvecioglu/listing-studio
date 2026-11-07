@@ -13,7 +13,9 @@ but is not endorsed or certified by Etsy.
 - Filter products by search, shop section, category, status, and variation values.
 - Edit one product with its pencil, or select products to edit together.
 - Add variation options with +; rename with the pencil; remove with the trash.
-- Edit variation prices, stock, SKUs, and availability in the inventory table.
+- Set prices from one shared row per style/size across selected listings;
+  choose grouping dimensions and stage different prices for several groups.
+- Edit stock, SKUs, and availability in the individual inventory table.
 - Update titles, descriptions, tags, materials, and shop sections.
 - Add JPG/PNG images at the beginning or end of selected galleries.
 - Remove individual images with the trash, or the first/last N images in bulk.
@@ -92,6 +94,8 @@ python check_edits.py
 python check_images.py
 node --check web/app.js
 node --check web/images.js
+node check_prices.js
+node --check web/prices.js
 ```
 
 ## Current limits and validation

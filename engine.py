@@ -107,8 +107,6 @@ def preview(before, rules, filters=None):
     default_filters = filters
     if not rules:
         raise ReviewError("Add at least one change.")
-    if len(rules) > 50:
-        raise ReviewError("Review at most 50 changes in one batch.")
 
     def record(path, heading, old, new):
         if path in touched:

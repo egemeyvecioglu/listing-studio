@@ -69,6 +69,28 @@ def main():
                 assert {p['property_values'][1]['values'][0] for p in added} == colors
             _, repeated_changes = preview(item['after'], service.resolve_rules({'snapshot':item['after']}, bulk_rules, service.shop('sample')))
             assert not repeated_changes, 'Existing new options should not be duplicated'
+        # A price group targets a named variation across every existing color;
+        # other sizes keep their prices, even when listing prices differ.
+        price_rules = [{'kind':'price', 'mode':'set', 'value':27, 'filters':{'513':['T-shirt / M']}}, {'kind':'price', 'mode':'set', 'value':41, 'filters':{'513':['Sweatshirt / M']}}]
+        for row in batch_rows:
+            current = row['snapshot']
+            updated, _ = preview(current, price_rules[-1:])
+            for old, new in zip(sorted(current['inventory']['products'],key=lambda p:str(p['property_values'])), sorted(updated['inventory']['products'],key=lambda p:str(p['property_values']))):
+                expected = 41 if old['property_values'][0]['values'] == ['Sweatshirt / M'] else old['offerings'][0]['price']
+                assert new['offerings'][0]['price'] == expected
+        many = copy.deepcopy(before)
+        template = many['inventory']['products'][0]
+        many['inventory']['products'] = []
+        many_rules = []
+        for n in range(60):
+            product = copy.deepcopy(template)
+            product['property_values'][0]['values'] = ['Style ' + str(n)]
+            many['inventory']['products'].append(product)
+            many_rules.append({'kind':'price','mode':'set','value':50+n,'filters':{'513':['Style '+str(n)]}})
+        updated, _ = preview(many, many_rules)
+        assert len(updated['inventory']['products']) == 60
+        for product in updated['inventory']['products']:
+            assert product['offerings'][0]['price'] == 50 + int(product['property_values'][0]['values'][0].split()[-1])
         print('Direct-edit safety check passed: additions, prices/stock targeting, conflict checks, product scope, repeat save, restore, and batch additions across different style/color combinations.')
 
 

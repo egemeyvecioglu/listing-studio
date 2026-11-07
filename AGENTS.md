@@ -34,4 +34,5 @@ company credentials, company code, or company infrastructure for this project.
 - Keep tests focused. Run `python check_edits.py` and `node --check web/app.js`
   for changes to the edit paths. For galleries, also run `python check_images.py`
   and `node --check web/images.js`. Distinguish sample checks from real Etsy tests.
+- For grouped price changes, run `node check_prices.js` and `python check_edits.py`.
 - Never commit or push changes unless the user requests publication.
