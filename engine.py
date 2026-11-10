@@ -132,6 +132,8 @@ def preview(before, rules, filters=None):
     for ri, rule in enumerate(rules):
         filters = rule.get("filters", default_filters)
         kind = rule.get("kind")
+        if kind == "order":
+            continue  # Apply positions after additions, renames and removals.
         if kind == "listing":
             field = rule.get("field")
             if field not in LISTING_FIELDS:
@@ -285,6 +287,37 @@ def preview(before, rules, filters=None):
     after["inventory"]["products"] = [p for p in products if not p.pop("_remove", False)]
     for p in after["inventory"]["products"]:
         p.pop("_new", None)
+    requested_orders = {}
+    untouched_order = variation_order(after["inventory"])
+    for rule in (r for r in rules if r.get("kind") == "order"):
+        prop_id = int(rule.get("property_id", 0))
+        key = str(prop_id)
+        values = list(variation_order(after["inventory"]).get(key, []))
+        if not values:
+            raise ReviewError("This product does not have the variation type being reordered.")
+        moves = rule.get("moves")
+        if not isinstance(moves, list) or not moves or not all(isinstance(move, dict) for move in moves):
+            raise ReviewError("Choose a position for the option.")
+        for move in moves:
+            value, anchor, position = move.get("value"), move.get("anchor"), move.get("position")
+            if value not in values or anchor not in values:
+                raise ReviewError("This product does not contain both options needed for the chosen position. Adjust the product selection or choose another position.")
+            if value == anchor or position not in ("before", "after"):
+                raise ReviewError("Choose a different option to place this option before or after.")
+            values.remove(value)
+            values.insert(values.index(anchor) + (position == "after"), value)
+        ranks = {value: n for n, value in enumerate(values)}
+        after["inventory"]["products"].sort(key=lambda product: ranks[next(p for p in product["property_values"] if p["property_id"] == prop_id)["values"][0]])
+        requested_orders[key] = values
+        prop_name = next(p.get("property_name", "Variation") for product in after["inventory"]["products"] for p in product["property_values"] if p["property_id"] == prop_id)
+        old = variation_order(before["inventory"]).get(key, [])
+        record("inventory.order." + key, prop_name + " order", old, values)
+        if old != values:
+            changes[-1].update(kind="order", property_name=prop_name)
+    actual_order = variation_order(after["inventory"])
+    expected_order = {**untouched_order, **requested_orders}
+    if requested_orders and actual_order != expected_order:
+        raise ReviewError("These combinations cannot keep the requested option order without changing another variation’s order. Adjust the positions or edit this product separately.")
     repair_dependencies(after["inventory"], changes)
     validate_inventory(after["inventory"])
     return after, changes

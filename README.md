@@ -13,6 +13,8 @@ but is not endorsed or certified by Etsy.
 - Filter products by search, shop section, category, status, and variation values.
 - Edit one product with its pencil, or select products to edit together.
 - Preserve existing option order and append new values in entry order.
+- Move existing or pending options with up/down arrows or choose a named
+  Before/After position. Review the resulting order before saving.
 - Add variation options with +; rename with the pencil; remove with the trash.
 - Set prices from one shared row per style/size across selected listings;
   choose grouping dimensions and stage different prices for several groups.
@@ -105,11 +107,13 @@ python check_images.py
 python check_review.py
 python check_tasks.py
 python check_save_flow.py
+python check_option_order.py
 node --check web/app.js
 node --check web/images.js
 node check_prices.js
 node --check web/prices.js
 node --check web/review.js
+node --check web/option_order.js
 ```
 
 ## Current limits and validation

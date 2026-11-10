@@ -38,4 +38,5 @@ company credentials, company code, or company infrastructure for this project.
 - For review or dependency changes, run `python check_review.py` and `node --check web/review.js`.
 - For task coordination changes, run `python check_tasks.py` (local HTTP/sample only).
 - For inventory order, inherited-price, or timing changes, run `python check_save_flow.py`.
+- For option-position controls, run `python check_option_order.py` and `node --check web/option_order.js`.
 - Never commit or push changes unless the user requests publication.
