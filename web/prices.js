@@ -13,7 +13,7 @@ function priceGroups(rows,dimensions){
   if(!groups.has(key))groups.set(key,{key,filters,name:props.map(p=>p.values.join(', ')).join(' / '),listing_ids:new Set(),prices:[],combinations:0});
   const g=groups.get(key);g.listing_ids.add(String(l.listing_id));g.prices.push(...p.offerings.map(o=>o.price));g.combinations++;
  }
- return [...groups.values()].map(g=>({...g,listing_ids:[...g.listing_ids]})).sort((a,b)=>a.name.localeCompare(b.name));
+ return [...groups.values()].map(g=>({...g,listing_ids:[...g.listing_ids]}));
 }
 function activePriceDimensions(rows){
  const available=properties(rows),ids=available.map(g=>g.id);

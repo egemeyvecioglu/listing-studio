@@ -12,9 +12,12 @@ but is not endorsed or certified by Etsy.
 
 - Filter products by search, shop section, category, status, and variation values.
 - Edit one product with its pencil, or select products to edit together.
+- Preserve existing option order and append new values in entry order.
 - Add variation options with +; rename with the pencil; remove with the trash.
 - Set prices from one shared row per style/size across selected listings;
   choose grouping dimensions and stage different prices for several groups.
+- Leave new-option Price blank to inherit each matching combination’s price;
+  set a price to override it. New-option Stock defaults to 999.
 - Edit stock, SKUs, and availability in the individual inventory table.
 - Update titles, descriptions, tags, materials, and shop sections.
 - Add JPG/PNG images at the beginning or end of selected galleries.
@@ -23,6 +26,8 @@ but is not endorsed or certified by Etsy.
 - Review additions as Added / Not present, with a color-count summary per option.
 - Review required variation-setting changes separately; each affected product
   needs separate consent before saving. Unchanged settings are preserved.
+- Track completed products, the active save step, elapsed time, and separate
+  Etsy read/write, request-allowance wait, and local-save timings.
 - Review before/after changes before approving any Etsy update.
 - Keep separate shop connections, saved shortcuts, pending edits, and history.
 - Sync manually or periodically while the local service is running.
@@ -99,6 +104,7 @@ python check_edits.py
 python check_images.py
 python check_review.py
 python check_tasks.py
+python check_save_flow.py
 node --check web/app.js
 node --check web/images.js
 node check_prices.js
@@ -131,3 +137,8 @@ interface still need validation on the receiving PC.
   running. Actual shop size and API quota determine a suitable interval.
 - Source code availability does not grant Etsy API access. Each installation
   needs its owner's approved credentials and authorized shop access.
+
+After updating from a version that sorted inventory, sync the shop and prepare
+a fresh review to read Etsy’s current option order. Existing reviews keep the
+order they were prepared with. The app checks returned option order after saving;
+live display in Etsy Shop Manager still needs verification on the connected PC.

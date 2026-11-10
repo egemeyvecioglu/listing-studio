@@ -37,4 +37,5 @@ company credentials, company code, or company infrastructure for this project.
 - For grouped price changes, run `node check_prices.js` and `python check_edits.py`.
 - For review or dependency changes, run `python check_review.py` and `node --check web/review.js`.
 - For task coordination changes, run `python check_tasks.py` (local HTTP/sample only).
+- For inventory order, inherited-price, or timing changes, run `python check_save_flow.py`.
 - Never commit or push changes unless the user requests publication.

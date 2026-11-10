@@ -76,6 +76,7 @@ class Etsy:
         self.next_request = 0
 
     def request(self, path, method="GET", data=None, form=False, content_type=None):
+        self.last_request_timing = {"wait": 0, "http": 0}
         account = self.service.vault.get("account:" + self.shop_id)
         if not account:
             raise EtsyError("Reconnect this shop to continue.")
@@ -86,12 +87,18 @@ class Etsy:
             self.service.vault.put("account:" + self.shop_id, account)
         delay = self.next_request - time.monotonic()
         if delay > 0:
+            waiting = time.perf_counter()
             time.sleep(delay)
+            self.last_request_timing["wait"] = time.perf_counter() - waiting
         self.next_request = time.monotonic() + 0.55
         request_headers = {"x-api-key": account["key"] + ":" + account["secret"], "Authorization": "Bearer " + account["access_token"]}
         if content_type:
             request_headers["Content-Type"] = content_type
-        result, headers = request_json(API + "/application" + path, method, data, request_headers, form)
+        started = time.perf_counter()
+        try:
+            result, headers = request_json(API + "/application" + path, method, data, request_headers, form)
+        finally:
+            self.last_request_timing["http"] = time.perf_counter() - started
         # Respect the actual allocated quota, rather than docs' example numbers.
         limit = headers.get("x-limit-per-second") or headers.get("X-Limit-Per-Second")
         if limit:
@@ -101,11 +108,12 @@ class Etsy:
                 pass
         return result
 
-    def current(self, listing_id):
-        listing = self.request("/listings/" + str(listing_id))
+    def current(self, listing_id, observe=None):
+        read = observe or (lambda step, fn: fn())
+        listing = read("Read product from Etsy", lambda: self.request("/listings/" + str(listing_id)))
         if str(listing.get("shop_id")) != self.shop_id:
             raise ReviewError("This product belongs to a different shop.")
-        inventory = self.request("/listings/" + str(listing_id) + "/inventory?max_variations_supported=3")
+        inventory = read("Read variations from Etsy", lambda: self.request("/listings/" + str(listing_id) + "/inventory?max_variations_supported=3"))
         return listing, snapshot(listing, inventory)
 
 
@@ -134,12 +142,12 @@ class Service:
         with self.status_lock:
             if not self.operation.acquire(False):
                 raise TaskBusy(self.status["message"])
-            self.status.update(busy=True, message=message, error="", started_at=time.time())
+            self.status.update(busy=True, message=message, error="", started_at=time.time(), progress=None)
             self.status["revision"] += 1
 
     def end_task(self):
         with self.status_lock:
-            self.status.update(busy=False, message="", started_at=None)
+            self.status.update(busy=False, message="", started_at=None, progress=None)
             self.status["revision"] += 1
             self.operation.release()
 
@@ -380,22 +388,72 @@ class Service:
         self.check_dependency_approval(batch, dependency_approvals)
         shop = self.shop(batch["shop_id"])
         batch["status"] = "applying"
-        self.store.put("batch", batch_id, batch)
+        started = time.perf_counter()
+        timing = batch["timing"] = {"started_at": time.time(), "elapsed": 0, "etsy_read": 0, "etsy_write": 0, "rate_wait": 0, "local_save": 0}
         api = None if shop.get("sample") else Etsy(self, batch["shop_id"])
+        total = sum(i["status"] not in ("unchanged", "attention", "conflict") for i in batch["items"])
+        active = None
+        processed = 0
+        for entry in batch["items"]:
+            entry["timings"] = []
+
+        def progress(step):
+            timing["elapsed"] = time.perf_counter() - started
+            with self.status_lock:
+                self.status["progress"] = {"batch_id": batch_id, "completed": sum(i["status"] == "complete" for i in batch["items"]), "processed": processed, "total": total, "product": active["title"] if active else "", "step": step, "step_started_at": time.time(), "started_at": timing["started_at"]}
+                self.status["revision"] += 1
+
+        def persist():
+            progress("Save progress on this computer")
+            tick = time.perf_counter()
+            self.store.put("batch", batch_id, batch)
+            timing["local_save"] += time.perf_counter() - tick
+
+        def measure(label, category, fn):
+            progress(label)
+            tick = time.perf_counter()
+            error = False
+            if api:
+                api.last_request_timing = {"http": 0, "wait": 0}
+            try:
+                return fn()
+            except Exception:
+                error = True
+                raise
+            finally:
+                duration = time.perf_counter() - tick
+                details = getattr(api, "last_request_timing", {}) if api else {}
+                timing[category] += details.get("http", duration)
+                timing["rate_wait"] += details.get("wait", 0)
+                if active is not None:
+                    active.setdefault("timings", []).append({"step": label, "seconds": duration, "http_seconds": details.get("http", duration), "wait_seconds": details.get("wait", 0), "failed": error})
+
+        def local_save(kind, key, value):
+            tick = time.perf_counter()
+            self.store.put(kind, key, value)
+            timing["local_save"] += time.perf_counter() - tick
+
+        digest = lambda value: fingerprint(value, include_order=True)
+        persist()
         for item in batch["items"]:
             if item["status"] in ("complete", "unchanged", "attention", "conflict"):
+                if item["status"] == "complete":
+                    processed += 1
                 continue
+            active = item
+            item["timings"] = []
             try:
                 if api:
-                    listing, current = api.current(item["listing_id"])
+                    listing, current = api.current(item["listing_id"], lambda label, fn: measure(label, "etsy_read", fn))
                 else:
                     listing = self.store.get("listing", item["listing_id"])
                     current = listing["snapshot"]
-                if fingerprint(current) == fingerprint(item["after"]):
+                progress("Compare inventory on this computer")
+                if digest(current) == digest(item["after"]):
                     item.update(status="complete", error="", fields_done=True, inventory_done=True, verified=current)
                     listing.update(current["fields"])
                     listing["snapshot"] = current
-                    self.store.put("listing", item["listing_id"], listing)
+                    local_save("listing", item["listing_id"], listing)
                 else:
                     intermediate = partial_snapshot(item["before"], item["after"], item.get("fields_done"), item.get("inventory_done"))
                     # Also allow a step whose HTTP response was lost: all desired
@@ -405,46 +463,53 @@ class Service:
                         possible.append(partial_snapshot(item["before"], item["after"], True, False))
                     if item.get("phase") == "inventory_sending":
                         possible.append(partial_snapshot(item["before"], item["after"], item.get("fields_done"), True))
-                    if fingerprint(current) not in {fingerprint(p) for p in possible}:
+                    if digest(current) not in {digest(p) for p in possible}:
                         item.update(status="conflict", error="This product changed since the preview. Sync and prepare a new review.")
-                        self.store.put("batch", batch_id, batch)
+                        persist()
                         continue
                     field_data = {k: v for k, v in item["after"]["fields"].items() if current["fields"].get(k) != v}
                     if field_data:
                         item["phase"] = "fields_sending"
-                        self.store.put("batch", batch_id, batch)
+                        persist()
                         if api:
-                            api.request("/shops/" + batch["shop_id"] + "/listings/" + item["listing_id"], "PATCH", field_data, form=True)
+                            measure("Save product details to Etsy", "etsy_write", lambda: api.request("/shops/" + batch["shop_id"] + "/listings/" + item["listing_id"], "PATCH", field_data, form=True))
                         item["fields_done"] = True
                         item["phase"] = "fields_done"
-                        self.store.put("batch", batch_id, batch)
-                    if fingerprint({"fields": item["after"]["fields"], "inventory": current["inventory"]}) != fingerprint(item["after"]):
+                        persist()
+                    if digest({"fields": item["after"]["fields"], "inventory": current["inventory"]}) != digest(item["after"]):
                         item["phase"] = "inventory_sending"
-                        self.store.put("batch", batch_id, batch)
+                        persist()
                         if api:
-                            api.request("/listings/" + item["listing_id"] + "/inventory?max_variations_supported=3", "PUT", item["after"]["inventory"])
+                            measure("Save variations to Etsy", "etsy_write", lambda: api.request("/listings/" + item["listing_id"] + "/inventory?max_variations_supported=3", "PUT", item["after"]["inventory"]))
                         item["inventory_done"] = True
                         item["phase"] = "inventory_done"
-                        self.store.put("batch", batch_id, batch)
+                        persist()
                     if api:
-                        listing, verified = api.current(item["listing_id"])
+                        listing, verified = api.current(item["listing_id"], lambda label, fn: measure(label.replace("Read", "Verify", 1), "etsy_read", fn))
                     else:
                         verified = copy.deepcopy(item["after"])
-                    if fingerprint(verified) != fingerprint(item["after"]):
-                        item.update(status="uncertain", error="Etsy's returned values differ from the approved review. Sync and check this product before retrying.")
+                    progress("Check saved variations on this computer")
+                    if digest(verified) != digest(item["after"]):
+                        message = "Etsy returned a different option order. Sync and check the saved listing before preparing another review." if fingerprint(verified) == fingerprint(item["after"]) else "Etsy's returned values differ from the approved review. Sync and check this product before retrying."
+                        item.update(status="uncertain", error=message, verified=verified)
                     else:
                         item.update(status="complete", error="", verified=verified)
                         listing.update(verified["fields"])
                         listing["snapshot"] = verified
-                        self.store.put("listing", item["listing_id"], listing)
-                self.store.put("batch", batch_id, batch)
+                        local_save("listing", item["listing_id"], listing)
+                persist()
             except (ReviewError, ValueError) as exc:
                 item.update(status="uncertain" if item.get("phase", "").endswith("sending") else "failed", error=str(exc))
-                self.store.put("batch", batch_id, batch)
+                persist()
             except Exception:
                 item.update(status="uncertain", error="This update could not be verified. Review it before trying again.")
-                self.store.put("batch", batch_id, batch)
+                persist()
+            finally:
+                processed += 1
+                progress("Product check finished")
         batch["status"] = "complete" if all(i["status"] in ("complete", "unchanged") for i in batch["items"]) else "needs_attention"
+        persist()
+        timing["elapsed"] = time.perf_counter() - started
         self.store.put("batch", batch_id, batch)
 
     def restore_review(self, batch_id):
@@ -457,6 +522,7 @@ class Service:
                 continue
             changes = [{**copy.deepcopy(c), "before": c["after"], "after": c["before"], "kind": "removed" if c.get("kind") == "added" else "added" if c.get("kind") == "removed" else c.get("kind", "updated")} for c in item["changes"]]
             batch["items"].append({"listing_id": item["listing_id"], "title": item["title"], "before": item.get("verified", item["after"]), "after": item["before"], "changes": changes, "status": "ready", "error": "", "fields_done": False, "inventory_done": False})
+        batch.pop("timing", None)
         if not batch["items"]:
             raise ReviewError("There are no completed changes to restore.")
         self.store.put("batch", batch["id"], batch)

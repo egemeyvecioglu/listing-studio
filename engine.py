@@ -49,7 +49,6 @@ def snapshot(listing, inventory):
             item = {"price": float(money(o["price"])), "quantity": int(o["quantity"]), "is_enabled": bool(o.get("is_enabled", True)), "readiness_state_id": o.get("readiness_state_id") or None}
             offerings.append(item)
         products.append({"sku": product.get("sku") or "", "property_values": sorted(props, key=lambda p: p["property_id"]), "offerings": offerings})
-    products.sort(key=product_key)
     fields = {k: copy.deepcopy(listing.get(k, [] if k in ("tags", "materials") else "")) for k in sorted(LISTING_FIELDS)}
     for k in ("tags", "materials"):
         fields[k] = fields[k] or []
@@ -61,9 +60,22 @@ def product_key(product):
     return json.dumps([(p["property_id"], p.get("scale_id"), p.get("values", [])) for p in product.get("property_values", [])], ensure_ascii=False, sort_keys=True)
 
 
-def fingerprint(value):
+def variation_order(inventory):
+    result = {}
+    for product in inventory.get("products", []):
+        for prop in product.get("property_values", []):
+            values = result.setdefault(str(prop["property_id"]), [])
+            for value in prop.get("values", []):
+                if value not in values:
+                    values.append(value)
+    return result
+
+
+def fingerprint(value, include_order=False):
     value = copy.deepcopy(value)
     if isinstance(value, dict) and "inventory" in value:
+        if include_order:
+            value["variation_order"] = variation_order(value["inventory"])
         # Etsy assigns IDs to new values after PUT. Compare their meaning, not IDs.
         for p in value["inventory"]["products"]:
             for prop in p["property_values"]:
@@ -275,7 +287,6 @@ def preview(before, rules, filters=None):
         p.pop("_new", None)
     repair_dependencies(after["inventory"], changes)
     validate_inventory(after["inventory"])
-    after["inventory"]["products"].sort(key=product_key)
     return after, changes
 
 
