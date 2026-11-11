@@ -90,6 +90,16 @@ def main():
         assert saved['timing']['local_save']>0
         assert [step['step'] for step in saved['items'][0]['timings']]==['Read product from Etsy','Read variations from Etsy','Save variations to Etsy','Verify product from Etsy','Verify variations from Etsy']
         assert any(c[2]['completed']==1 and c[2]['total']==2 for c in api.calls if c[0]==ids[1])
+        # A single-listing review must not read or write any other listing,
+        # even if a supplied rule still mentions an earlier bulk selection.
+        other_before=fingerprint(service.store.get('listing',ids[1])['snapshot'],include_order=True)
+        single=service.build_review({'shop_id':'sample','listing_ids':[ids[0]],'rules':[{'kind':'price','mode':'set','value':51,'listing_ids':ids,'filters':{'513':[order[0]]}}]})
+        assert len(single['items'])==1
+        api=FakeEtsy(service,'sample')
+        with patch('service.Etsy',return_value=api):service.apply_batch(single['id'],[ids[0]])
+        assert service.batch(single['id'])['status']=='complete'
+        assert len(api.calls)==5 and {lid for lid,_,_ in api.calls}=={ids[0]}
+        assert other_before==fingerprint(service.store.get('listing',ids[1])['snapshot'],include_order=True)
         # A successful write with the wrong returned order must not count as verified.
         rows,order = fixture(service)
         bad = service.build_review({'shop_id':'sample','listing_ids':[ids[0]],'rules':rules})

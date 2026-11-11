@@ -1,6 +1,7 @@
 'use strict';
 
 let dictionary = {}, locale = 'en', state, shopId = '', page = 'products', selected = new Set(), rules = [], variantFilters = {}, listingVariants = {}, filters = {search:'',section:'',status:'',category:''}, batchData = null, approved = false, busy = false, toastTimer;
+let editorDrafts={},editorScope='';
 const $ = s => document.querySelector(s);
 const t = (key, args={}) => Object.entries(args).reduce((text,[k,v]) => text.replaceAll('{'+k+'}', String(v)), dictionary[key] ?? key);
 const e = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -21,8 +22,43 @@ async function post(path,data={}){const response=await fetch(path,{method:'POST'
 function notify(message){$('#toast').textContent=t(message);$('#toast').classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.add('hidden'),5000);}
 function fail(error){$('#global-error').textContent=t(error.message || String(error));$('#global-error').classList.remove('hidden');}
 function clearError(){$('#global-error').classList.add('hidden');}
-function saveDraft(){if(shopId)localStorage.setItem('studio:draft:'+shopId,JSON.stringify({selected:[...selected],rules,variantFilters,listingVariants,filters}));}
-function loadDraft(){let draft={};try{draft=JSON.parse(localStorage.getItem('studio:draft:'+shopId)||'{}')}catch{} selected=new Set(draft.selected||[]);rules=draft.rules||[];variantFilters=draft.variantFilters||{};listingVariants=draft.listingVariants||{};filters={search:'',section:'',status:'',category:'',...draft.filters};}
+function scopeKey(ids){return JSON.stringify([...new Set([...ids].map(String))].sort());}
+function saveDraft(){
+ if(!shopId)return;
+ if(editorScope)editorDrafts[editorScope]={rules:structuredClone(rules),variantFilters:structuredClone(variantFilters)};
+ localStorage.setItem('studio:draft:'+shopId,JSON.stringify({selected:[...selected],rules,variantFilters,listingVariants,filters,editorDrafts,editorScope}));
+}
+function loadDraft(){
+ let draft={};try{draft=JSON.parse(localStorage.getItem('studio:draft:'+shopId)||'{}')}catch{}
+ selected=new Set(draft.selected||[]);editorDrafts=draft.editorDrafts||{};
+ editorScope=draft.editorScope||scopeKey(selected);
+ if(!draft.editorDrafts&&draft.rules?.length){
+  // Preserve an older bulk draft under its original targets, instead of
+  // silently bringing it into a later single-product edit.
+  const legacy=scopeKey([...selected,...draft.rules.flatMap(r=>r.listing_ids||[])]);
+  editorDrafts[legacy]={rules:draft.rules,variantFilters:draft.variantFilters||{}};
+ }
+ const active=editorDrafts[editorScope]||{};
+ rules=structuredClone(active.rules||[]);variantFilters=structuredClone(active.variantFilters||{});
+ listingVariants=draft.listingVariants||{};filters={search:'',section:'',status:'',category:'',...draft.filters};
+}
+function beginEditor(ids){
+ const queued=editorScope==='[]'&&rules.length?{rules:structuredClone(rules),variantFilters:structuredClone(variantFilters)}:null;
+ saveDraft();selected=new Set([...ids].map(String));editorScope=scopeKey(selected);
+ const active=queued&&selected.size?queued:editorDrafts[editorScope]||{};rules=structuredClone(active.rules||[]);variantFilters=structuredClone(active.variantFilters||{});
+ if(queued&&selected.size){rules=rules.map(r=>({...r,listing_ids:[...selected]}));delete editorDrafts['[]'];}
+ inventorySelection.clear();inventorySearch='';priceGroupSelection.clear();priceGroupIds=null;
+ batchData=null;approved=false;page='edit';editTab='options';saveDraft();
+}
+function reviewRequest(){
+ const ids=[...selected].map(String),allowed=new Set(ids);
+ const scoped=rules.flatMap(r=>{
+  const targets=(r.listing_ids||ids).map(String).filter(id=>allowed.has(id));
+  return targets.length?[{...structuredClone(r),listing_ids:[...new Set(targets)]}]:[];
+ });
+ return {shop_id:shopId,listing_ids:ids,rules:scoped,filters:{}};
+}
+
 async function refresh(){state=await get('/api/state');if(!state.shops.some(s=>String(s.shop_id)===shopId)){shopId=String(state.shops.find(s=>!s.sample)?.shop_id || state.shops[0]?.shop_id || '');loadDraft();}render();}
 function useShop(id){inventorySelection.clear();inventorySearch='';priceGroupIds=null;priceGroupSelection.clear();priceView='groups';editTab='options';saveDraft();shopId=id;localStorage.setItem('studio:shop',shopId);loadDraft();batchData=null;page='products';render();}
 function nav(next){saveDraft();page=next;if(next!=='review')batchData=null;render();}
@@ -102,15 +138,16 @@ document.addEventListener('click',async event=>{const node=event.target.closest(
   if(action==='clear-selection'){selected.clear();render();return;}
   if(action==='inspect'){inspect(node.dataset.id);return;}
   if(action==='products'){nav('products');return;}
-  if(action==='edit'){if(batchData){rules=structuredClone(batchData.batch.rules);variantFilters=structuredClone(batchData.batch.filters);selected=new Set(batchData.batch.items.map(i=>String(i.listing_id)));}page='edit';batchData=null;render();window.scrollTo({top:0,behavior:'smooth'});return;}
+  if(action==='edit'){if(batchData){const b=batchData.batch;beginEditor(b.items.map(i=>String(i.listing_id)));rules=structuredClone(b.rules);variantFilters=structuredClone(b.filters);}else beginEditor(selected);render();window.scrollTo({top:0,behavior:'smooth'});return;}
+  if(action==='resume-editor'){beginEditor(JSON.parse(editorScope||'[]'));render();window.scrollTo({top:0,behavior:'smooth'});return;}
   if(action==='clear-variations'){variantFilters={};render();return;}
-  if(action==='preview'){node.disabled=true;try{batchData=await post('/api/preview',{shop_id:shopId,listing_ids:[...new Set([...selected,...rules.flatMap(r=>r.listing_ids||[])])],rules,filters:{}});approved=false;page='review';await refresh();window.scrollTo({top:0,behavior:'smooth'});}finally{node.disabled=false}return;}
+  if(action==='preview'){node.disabled=true;try{const request=reviewRequest();rules=request.rules;saveDraft();batchData=await post('/api/preview',request);approved=false;page='review';await refresh();window.scrollTo({top:0,behavior:'smooth'});}finally{node.disabled=false}return;}
   if(action==='apply'){if(!approved)return;node.disabled=true;await post('/api/apply',{id:batchData.batch.id,approval:batchData.approval,dependency_approvals:reviewDependencyApprovals(batchData.batch)});approved=false;await refresh();return;}
   if(action==='restore'){batchData=await post('/api/restore',{id:batchData.batch.id});approved=false;render();return;}
   if(action==='open-batch'){await openBatch(node.dataset.id);return;}
   if(action==='save-preset'){modal('Save shortcut',`${field('Name',`<input id="preset-name" placeholder="${tr('For example, winter prices')}">`)}<p>${tr('The changes and variation targets are saved. Product selection is made fresh each time.')}</p><div class="actions">${button('Cancel','close-modal')}${button('Save edits','confirm-preset','')}</div>`);return;}
   if(action==='confirm-preset'){await post('/api/preset',{shop_id:shopId,name:$('#preset-name').value,rules:rules.map(r=>{const copy={...r};delete copy.listing_ids;return copy}),filters:variantFilters});$('#dialog').close();await refresh();notify('Edits saved for next time.');return;}
-  if(action==='use-preset'){const p=state.presets.find(p=>p.id===node.dataset.id);rules=structuredClone(p.rules).map(r=>{delete r.listing_ids;return r});variantFilters=structuredClone(p.filters);if(selected.size){page='edit';render()}else{page='products';render();notify('Choose your products, then open Choose changes. Your saved edits are ready.')}return;}
+  if(action==='use-preset'){const p=state.presets.find(p=>p.id===node.dataset.id);beginEditor(selected);rules=structuredClone(p.rules).map(r=>{delete r.listing_ids;return r});variantFilters=structuredClone(p.filters);if(selected.size){page='edit';render()}else{page='products';render();notify('Choose your products, then open Choose changes. Your saved edits are ready.')}return;}
   if(action==='save-match'){modal('Save matching variations',`${field('Group name',`<input id="match-name" placeholder="${tr('For example, all T-shirt sizes')}">`)}<p>${tr('Only the checked values are included. Groups are kept separately for each shop.')}</p><div class="actions">${button('Cancel','close-modal')}${button('Save matches','confirm-match','')}</div>`);return;}
   if(action==='confirm-match'){await post('/api/match',{shop_id:shopId,name:$('#match-name').value,values:variantFilters});$('#dialog').close();await refresh();notify('Matching variations saved.');return;}
   if(action==='load-match'){const values=state.matches.filter(m=>m.shop_id===shopId);modal('Choose saved matches',values.map(m=>`<div class="connected-shop"><div>${e(m.name)}</div>${button('Use matches','use-match','quiet small',`data-id="${m.id}"`)}</div>`).join('')||`<p>${tr('No saved matches yet. Select the variations you consider equivalent, then save them as a group.')}</p>`);return;}
@@ -179,15 +216,15 @@ function productsPage(){
  if(selected.size)html=html.replace(button('Edit selected products','edit',''),variationAddButtons(editRows())+button('Edit selected products','edit',''));
  html=html.replace(/aria-label="View variations"/g,'aria-label="Edit product" title="Edit product"').replace(/>↗<\/button>/g,'>'+icons.edit+'</button>');
  html=html.replace(tr('Make a small change. Or a shop-wide one.'),tr('Select products to edit together, or use the pencil to edit one product.'));
- if(rules.length)html=`<div class="notice pending-banner"><span>${tr('{count} pending edits saved on this computer',{count:rules.length})}</span>${button('Continue editing','edit','small')}</div>`+html;
+ if(rules.length)html=`<div class="notice pending-banner"><span>${tr('{count} pending edits saved on this computer',{count:rules.length})}</span>${button('Continue editing','resume-editor','small')}</div>`+html;
  return html;
 }
-function inspect(id){selected=new Set([String(id)]);page='edit';editTab='options';inventorySelection.clear();render();window.scrollTo({top:0,behavior:'smooth'});}
+function inspect(id){beginEditor([id]);render();window.scrollTo({top:0,behavior:'smooth'});}
 
 function editorPage(){
  if(editTab==='images')return imageEditorPage();
  const rows=editRows(),groups=properties(rows);
- return `${sampleStrip()}<div class="editor-heading"><div><button class="text-button back-button" data-action="products">← ${tr('All products')}</button><h1>${rows.length===1?e(rows[0].title):tr('Edit {count} products',{count:rows.length})}</h1><p>${tr('Edits stay here until you review and save them to Etsy.')}</p></div><div class="row-actions">${variationAddButtons(rows)}${button('Save shortcut','save-preset','secondary',rules.length?'':'disabled')}${button('Review changes ({count})','preview','',rules.length?'':'disabled').replace('{count}',String(rules.length))}</div></div><div class="editor-tabs" role="tablist" aria-label="${tr('Product editor')}">${[['options','Variations'],['inventory','Prices & stock'],['details','Product details'],['images','Images']].map(([id,name])=>`<button role="tab" aria-selected="${editTab===id}" class="${editTab===id?'active':''}" data-action="editor-tab" data-tab="${id}">${tr(name)}</button>`).join('')}</div><div class="editor-workspace"><div class="editing-content">${editTab==='options'?`<div class="section-intro"><h2>${tr('Variation options')}</h2><p>${tr('Add, edit or remove options here. Use the arrows or Move to choose their order.')}</p></div><div class="options-columns">${groups.map(g=>`<section class="panel"><div class="panel-head"><h2>${e(g.name)}</h2><button class="button secondary small" data-action="new-option" data-group="${g.id}" aria-label="${tr('Add {name}',{name:g.name})}">${icons.plus}${tr('Add')}</button></div><div class="option-list">${optionRows(g)}</div><button class="add-option-row" data-action="new-option" data-group="${g.id}">${icons.plus}${tr('Add {name}',{name:g.name})}</button></section>`).join('')||`<div class="panel empty"><h2>${tr('No variations on these products')}</h2><p>${tr('Adding a new variation type is not supported in this version. Existing types can be managed here.')}</p></div>`}</div>`:editTab==='inventory'?inventoryTable(rows):detailEditor(rows)}</div><aside class="pending-panel panel"><div class="panel-head"><h2>${tr('Pending changes')}</h2><span class="chip">${rules.length}</span></div><div class="pending-list">${rules.map((r,i)=>`<div class="pending-row"><div><strong>${e(r._label||ruleSummary(r))}</strong><small>${tr('{count} products',{count:r.listing_ids?.length||rows.length})}</small></div><div class="row-actions">${actionIcon('edit-pending','Edit pending change','edit',`data-index="${i}"`)}${actionIcon('remove-pending','Remove pending change','trash',`data-index="${i}"`)}</div></div>`).join('')||`<div class="pending-empty"><span>✎</span><p>${tr('No changes yet. Edit a value or add a variation to get started.')}</p></div>`}</div>${rules.length?`<div class="panel-body">${button('Review changes','preview','')}<button class="text-button" data-action="discard-pending">${tr('Discard all edits')}</button></div>`:''}</aside></div>`;
+ return `${sampleStrip()}<div class="editor-heading"><div><button class="text-button back-button" data-action="products">← ${tr('All products')}</button><h1>${rows.length===1?e(rows[0].title):tr('Edit {count} products',{count:rows.length})}</h1><p>${tr('Edits stay here until you review and save them to Etsy.')}</p></div><div class="row-actions">${variationAddButtons(rows)}${button('Save shortcut','save-preset','secondary',rules.length?'':'disabled')}${button('Review changes ({count})','preview','',rules.length?'':'disabled').replace('{count}',String(rules.length))}</div></div><div class="editor-tabs" role="tablist" aria-label="${tr('Product editor')}">${[['options','Variations'],['inventory','Prices & stock'],['details','Product details'],['images','Images']].map(([id,name])=>`<button role="tab" aria-selected="${editTab===id}" class="${editTab===id?'active':''}" data-action="editor-tab" data-tab="${id}">${tr(name)}</button>`).join('')}</div><div class="editor-workspace"><div class="editing-content">${editTab==='options'?`<div class="section-intro"><h2>${tr('Variation options')}</h2><p>${tr('Drag the handle to move an option. You can also use the arrows or Move.')}</p></div><div class="options-columns">${groups.map(g=>`<section class="panel"><div class="panel-head"><h2>${e(g.name)}</h2><button class="button secondary small" data-action="new-option" data-group="${g.id}" aria-label="${tr('Add {name}',{name:g.name})}">${icons.plus}${tr('Add')}</button></div><div class="option-list">${optionRows(g)}</div><button class="add-option-row" data-action="new-option" data-group="${g.id}">${icons.plus}${tr('Add {name}',{name:g.name})}</button></section>`).join('')||`<div class="panel empty"><h2>${tr('No variations on these products')}</h2><p>${tr('Adding a new variation type is not supported in this version. Existing types can be managed here.')}</p></div>`}</div>`:editTab==='inventory'?inventoryTable(rows):detailEditor(rows)}</div><aside class="pending-panel panel"><div class="panel-head"><h2>${tr('Pending changes')}</h2><span class="chip">${rules.length}</span></div><div class="pending-list">${rules.map((r,i)=>`<div class="pending-row"><div><strong>${e(r._label||ruleSummary(r))}</strong><small>${tr('{count} products',{count:r.listing_ids?.length||rows.length})}</small></div><div class="row-actions">${actionIcon('edit-pending','Edit pending change','edit',`data-index="${i}"`)}${actionIcon('remove-pending','Remove pending change','trash',`data-index="${i}"`)}</div></div>`).join('')||`<div class="pending-empty"><span>✎</span><p>${tr('No changes yet. Edit a value or add a variation to get started.')}</p></div>`}</div>${rules.length?`<div class="panel-body">${button('Review changes','preview','')}<button class="text-button" data-action="discard-pending">${tr('Discard all edits')}</button></div>`:''}</aside></div>`;
 }
 function inventoryTable(rows){
  if(priceView==='groups')return groupedPriceTable(rows);
@@ -249,7 +286,7 @@ function showDetailDialog(key,index=null){
  event.stopImmediatePropagation();clearError();
  try{
  if(a==='editor-tab'){editTab=node.dataset.tab;render();if(editTab==='images')loadImageGalleries();}
- if(a==='new-option'){page='edit';editTab='options';render();showOptionDialog(node.dataset.group,'copy');}
+ if(a==='new-option'){if(page!=='edit'||editorScope!==scopeKey(selected))beginEditor(selected);page='edit';editTab='options';render();showOptionDialog(node.dataset.group,'copy');}
  if(a==='rename-option'){const i=rules.findIndex(r=>r.kind==='option'&&String(r.property_id)===node.dataset.group&&r.old===node.dataset.value&&r.mode==='rename');showOptionDialog(node.dataset.group,'rename',node.dataset.value,i>=0?i:null);}
  if(a==='delete-option'){const i=rules.findIndex(r=>r.kind==='option'&&String(r.property_id)===node.dataset.group&&r.old===node.dataset.value&&r.mode!=='copy');showOptionDialog(node.dataset.group,'remove',node.dataset.value,i>=0?i:null);}
  if(a==='confirm-option'){

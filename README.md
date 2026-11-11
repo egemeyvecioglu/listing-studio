@@ -12,8 +12,10 @@ but is not endorsed or certified by Etsy.
 
 - Filter products by search, shop section, category, status, and variation values.
 - Edit one product with its pencil, or select products to edit together.
+  Single-product and bulk drafts stay separate. A review includes only the
+  current selection; unrelated pending edits cannot expand its targets.
 - Preserve existing option order and append new values in entry order.
-- Move existing or pending options with up/down arrows or choose a named
+- Drag existing or pending options by their handle, use up/down arrows, or choose a named
   Before/After position. Review the resulting order before saving.
 - Add variation options with +; rename with the pencil; remove with the trash.
 - Set prices from one shared row per style/size across selected listings;
@@ -111,6 +113,7 @@ python check_option_order.py
 node --check web/app.js
 node --check web/images.js
 node check_prices.js
+node check_editor_scope.js
 node --check web/prices.js
 node --check web/review.js
 node --check web/option_order.js

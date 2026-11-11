@@ -55,6 +55,10 @@ def main():
         with patch('service.Etsy',return_value=api):service.apply_batch(restore['id'])
         assert service.batch(restore['id'])['status']=='complete'
         for lid in ids:assert variation_order(service.store.get('listing',lid)['snapshot']['inventory'])['513']==expected
+        colors=service.build_review({'shop_id':'sample','listing_ids':[ids[0]],'rules':[{'kind':'order','property_id':'514','moves':[{'value':'Ivory','anchor':'Pepper','position':'before'}]}]})
+        assert colors['items'][0]['status']=='ready'
+        assert variation_order(colors['items'][0]['after']['inventory'])['514']==['Ivory','Pepper']
+        assert fingerprint(colors['items'][0]['before'])==fingerprint(colors['items'][0]['after'])
         missing=copy.deepcopy(batch['items'][0]['before'])
         missing['inventory']['products']=[p for p in missing['inventory']['products'] if p['property_values'][0]['values']!=[original[-1]]]
         try:

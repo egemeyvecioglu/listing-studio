@@ -1,5 +1,5 @@
 'use strict';
-let orderDialogGroup='';
+let orderDialogGroup='',optionDrag=null;
 function baseOptionEntries(group){
  const entries=group.values.map(original=>{
   const pending=rules.find(r=>r.kind==='option'&&String(r.property_id)===group.id&&r.old===original&&r.mode!=='copy');
@@ -58,7 +58,7 @@ function optionRows(group){
   const arrows=entry.removed?'':`<button class="icon-button" id="option-up-${group.id}-${e(encodeURIComponent(entry.value))}" data-action="option-up" ${attrs} aria-label="${tr('Move {name} up',{name:entry.value})}" title="${tr('Move up')}" ${i<=0?'disabled':''}>↑</button><button class="icon-button" id="option-down-${group.id}-${e(encodeURIComponent(entry.value))}" data-action="option-down" ${attrs} aria-label="${tr('Move {name} down',{name:entry.value})}" title="${tr('Move down')}" ${i===active.length-1?'disabled':''}>↓</button><button class="text-button option-place" data-action="option-place" ${attrs} aria-label="${tr('Choose position for {name}',{name:entry.value})}" ${active.length<2?'disabled':''}>${tr('Move…')}</button>`;
   const edit=entry.new?actionIcon('edit-pending',t('Edit {name}',{name:entry.value}),'edit',`data-index="${entry.index}"`):actionIcon('rename-option',t('Edit {name}',{name:entry.value}),'edit',`data-group="${group.id}" data-value="${e(entry.original)}"`);
   const remove=entry.new?actionIcon('remove-pending',t('Remove {name}',{name:entry.value}),'trash',`data-index="${entry.index}"`):actionIcon('delete-option',t('Delete {name}',{name:entry.value}),'trash',`data-group="${group.id}" data-value="${e(entry.original)}"`);
-  return `<div class="option-row ${entry.new?'staged-option':''}"><div><strong class="${entry.removed?'removed-value':''}">${entry.removed?'':`<span class="option-position">${i+1}.</span> `}${e(entry.value)}</strong>${entry.new||entry.removed||entry.edited?`<span class="pending-tag">${tr(entry.new?'New':entry.removed?'Pending removal':'Edited')}</span>`:''}<small>${entry.new?`${entry.rule.price==null||entry.rule.price===''?tr('Keeps each matching variation’s price'):e(formatMoney(entry.rule.price))} · ${tr('Stock {count}',{count:entry.rule.quantity})}`:tr('{count} of {total} products',{count,total:editRows().length})}</small></div><div class="row-actions option-row-actions">${arrows}${edit}${remove}</div></div>`;
+  return `<div class="option-row ${entry.new?'staged-option':''}" data-option-row="${e(entry.value)}" data-option-group="${group.id}" ${entry.removed?'data-option-removed="true"':''}>${entry.removed?'':`<span role="button" tabindex="0" class="option-drag-handle" data-option-drag="${e(entry.value)}" data-group="${group.id}" aria-label="${tr('Drag {name} to reorder',{name:entry.value})}" title="${tr('Drag to reorder')}">⠿</span>`}<div class="option-row-name"><strong class="${entry.removed?'removed-value':''}">${entry.removed?'':`<span class="option-position">${i+1}.</span> `}${e(entry.value)}</strong>${entry.new||entry.removed||entry.edited?`<span class="pending-tag">${tr(entry.new?'New':entry.removed?'Pending removal':'Edited')}</span>`:''}<small>${entry.new?`${entry.rule.price==null||entry.rule.price===''?tr('Keeps each matching variation’s price'):e(formatMoney(entry.rule.price))} · ${tr('Stock {count}',{count:entry.rule.quantity})}`:tr('{count} of {total} products',{count,total:editRows().length})}</small></div><div class="row-actions option-row-actions">${arrows}${edit}${remove}</div></div>`;
  }).join('');
 }
 function showOrderDialog(groupId,value=''){
@@ -86,3 +86,45 @@ document.addEventListener('change',event=>{
  const entries=orderedOptionEntries(groupById(orderDialogGroup)).filter(x=>!x.removed&&x.value!==event.target.value);
  $('#order-anchor').innerHTML=entries.map(x=>option(x.value,x.value,'')).join('');
 });
+
+let optionDragFrame=0;
+function clearOptionDropMarks(){document.querySelectorAll('.option-drop-before,.option-drop-after').forEach(n=>n.classList.remove('option-drop-before','option-drop-after'));}
+function optionDropTarget(event){
+ const row=document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-option-row]');
+ if(!optionDrag||!row||row.dataset.optionRemoved||row.dataset.optionGroup!==optionDrag.group||row.dataset.optionRow===optionDrag.value||optionDrag.shop!==shopId||optionDrag.scope!==scopeKey(selected))return null;
+ const bounds=row.getBoundingClientRect();
+ return {row,position:event.clientY<bounds.top+bounds.height/2?'before':'after'};
+}
+function paintOptionDrop(){
+ clearOptionDropMarks();if(!optionDrag?.moved)return;
+ const target=optionDropTarget(optionDrag);if(target)target.row.classList.add('option-drop-'+target.position);
+}
+function stopOptionDrag(){
+ optionDrag=null;cancelAnimationFrame(optionDragFrame);clearOptionDropMarks();document.querySelectorAll('.option-dragging').forEach(n=>n.classList.remove('option-dragging'));
+}
+function scrollOptionDrag(){
+ if(!optionDrag?.moved)return;
+ const delta=optionDrag.clientY<60?-14:optionDrag.clientY>window.innerHeight-60?14:0;
+ if(delta){window.scrollBy(0,delta);paintOptionDrop();}
+ optionDragFrame=requestAnimationFrame(scrollOptionDrag);
+}
+document.addEventListener('pointerdown',event=>{
+ const handle=event.target.closest('[data-option-drag]');if(!handle||event.button!==0)return;
+ event.preventDefault();
+ optionDrag={value:handle.dataset.optionDrag,group:handle.dataset.group,shop:shopId,scope:scopeKey(selected),startX:event.clientX,startY:event.clientY,clientX:event.clientX,clientY:event.clientY,moved:false};
+ handle.setPointerCapture(event.pointerId);
+ handle.closest('[data-option-row]').classList.add('option-dragging');
+});
+document.addEventListener('pointermove',event=>{
+ if(!optionDrag)return;
+ optionDrag.clientX=event.clientX;optionDrag.clientY=event.clientY;
+ if(!optionDrag.moved&&Math.hypot(event.clientX-optionDrag.startX,event.clientY-optionDrag.startY)>6){optionDrag.moved=true;optionDragFrame=requestAnimationFrame(scrollOptionDrag);}
+ paintOptionDrop();
+});
+document.addEventListener('pointerup',event=>{
+ if(!optionDrag)return;
+ const moved=Math.hypot(event.clientX-optionDrag.startX,event.clientY-optionDrag.startY)>6,target=moved?optionDropTarget(event):null,source=optionDrag;
+ stopOptionDrag();if(!target)return;
+ try{stageOptionMove(source.group,source.value,target.row.dataset.optionRow,target.position);render();}catch(error){fail(error);}
+});
+document.addEventListener('pointercancel',stopOptionDrag);
