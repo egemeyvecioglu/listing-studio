@@ -165,7 +165,7 @@ def server_for(service, port, secure=False):
                 elif path == "/api/connect":
                     result = service.auth_start(data.get("connection_id", ""))
                 elif path == "/api/sync":
-                    service.start_sync(str(data["shop_id"]) if data.get("shop_id") else None)
+                    service.start_sync(str(data["shop_id"]) if data.get("shop_id") else None, full=data.get("full", False))
                     result = {"ok": True}
                 elif path == "/api/preview":
                     # Local calculation only. Sync replaces its cache atomically;

@@ -34,7 +34,16 @@ but is not endorsed or certified by Etsy.
   Etsy read/write, request-allowance wait, and local-save timings.
 - Review before/after changes before approving any Etsy update.
 - Keep separate shop connections, saved shortcuts, pending edits, and history.
-- Sync manually or periodically while the local service is running.
+- Sync manually or periodically while the local service is running. First setup
+  loads every inventory. Routine sync reads inventories in batches of up to 100
+  and updates changed local records by comparing actual variation data, including
+  prices, stock, SKUs, options and order. It does not rely on listing timestamps.
+  All listing-status summary pages are still checked, including drafts, inactive,
+  expired and sold-out products. **Full sync…** forces individual inventory reads
+  and replaces the local inventory snapshots, useful for diagnosing batch results.
+  Both methods download all inventory data; routine sync reduces request count,
+  not payload size. Progress shows inventory checks; Settings shows changed and
+  unchanged counts. Failed requests preserve the previous cache and checkpoint.
 - Prepare local reviews during sync. Etsy saves wait until the named task
   finishes; pending saves are never automatically queued.
 - Prepare restore previews and recover interrupted batches without automatically
@@ -110,6 +119,7 @@ python check_review.py
 python check_tasks.py
 python check_save_flow.py
 python check_option_order.py
+python check_sync.py
 node --check web/app.js
 node --check web/images.js
 node check_prices.js
@@ -120,6 +130,10 @@ node --check web/option_order.js
 ```
 
 ## Current limits and validation
+
+Batch inventory sync is covered by offline checks. Live batch/single-read parity
+and whether individual variation edits change Etsy listing timestamps remain
+unverified; the sync does not assume timestamp propagation.
 
 The user has reported a successful Windows connection and listing sync. The new
 direct-edit interface has been checked in a browser with sample products, and

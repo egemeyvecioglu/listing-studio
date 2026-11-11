@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from engine import changed_dependencies, LISTING_FIELDS, ReviewError, fingerprint, partial_snapshot, preview, snapshot
+from engine import changed_dependencies, listing_fields, LISTING_FIELDS, ReviewError, fingerprint, partial_snapshot, preview, snapshot
 from storage import Vault
 
 API = "https://api.etsy.com/v3"
@@ -24,7 +24,9 @@ class TaskBusy(ReviewError):
 
 
 class EtsyError(ReviewError):
-    pass
+    def __init__(self, message, status=None):
+        self.status = status
+        super().__init__(message)
 
 
 def request_json(url, method="GET", data=None, headers=None, form=False):
@@ -58,14 +60,14 @@ def request_json(url, method="GET", data=None, headers=None, form=False):
             retry = exc.headers.get("retry-after", "60")
             raise EtsyError("Etsy's request limit was reached. Wait " + retry[:20] + " seconds before syncing or retrying.")
         if exc.code in (401, 403):
-            raise EtsyError("Etsy did not allow this request. Reconnect the shop and check the app's approved access.")
+            raise EtsyError("Etsy did not allow this request. Reconnect the shop and check the app's approved access.", exc.code)
         # Return API validation detail without echoing tokens/headers or request bodies.
         try:
             error = json.loads(exc.read(4096))
             message = str(error.get("error", ""))[:350]
         except (ValueError, AttributeError):
             message = ""
-        raise EtsyError("Etsy could not complete the request (" + str(exc.code) + "). " + message)
+        raise EtsyError("Etsy could not complete the request (" + str(exc.code) + "). " + message, exc.code)
     except (urllib.error.URLError, TimeoutError, OSError):
         raise EtsyError("Etsy could not be reached. A submitted update may still have completed. Check its status before retrying.")
 
@@ -142,12 +144,12 @@ class Service:
         with self.status_lock:
             if not self.operation.acquire(False):
                 raise TaskBusy(self.status["message"])
-            self.status.update(busy=True, message=message, error="", started_at=time.time(), progress=None)
+            self.status.update(busy=True, message=message, error="", started_at=time.time(), progress=None, sync_progress=None)
             self.status["revision"] += 1
 
     def end_task(self):
         with self.status_lock:
-            self.status.update(busy=False, message="", started_at=None, progress=None)
+            self.status.update(busy=False, message="", started_at=None, progress=None, sync_progress=None)
             self.status["revision"] += 1
             self.operation.release()
 
@@ -234,13 +236,29 @@ class Service:
         self.touch()
         return shop_id
 
-    def sync_shop(self, shop_id):
+    def sync_shop(self, shop_id, full=False):
         shop = self.shop(shop_id)
+        started = time.time()
+        cached = {str(l["listing_id"]): l for l in self.store.all("listing") if str(l["shop_id"]) == str(shop_id)}
+        full = bool(full or not shop.get("last_sync") or not cached)
+        mode = "full" if full else "changes"
+        stats = {"mode": mode, "checked": 0, "refreshed": 0, "reused": 0, "status_changes": 0, "removed": 0, "summary_requests": 0, "inventory_requests": 0, "inventories_checked": 0}
+
+        def report(step, product="", total=None):
+            with self.status_lock:
+                self.status["message"] = "Full shop sync…" if full else "Checking for changed products…"
+                self.status["sync_progress"] = {"mode": mode, "step": step, "product": product, "checked": stats["checked"], "updated": stats["inventories_checked"], "total_updates": total}
+                self.status["revision"] += 1
+
+        report("Checking listing summaries")
         if shop.get("sample"):
-            shop["last_sync"] = time.time()
+            stats.update(checked=len(cached), reused=len(cached), elapsed=time.time()-started, finished_at=time.time())
+            shop.update(last_sync=time.time(), sync_stats=stats, last_sync_started=started)
+            if full:
+                shop["last_full_sync"] = shop["last_sync"]
             self.store.put("shop", shop_id, shop)
             return
-        api, listings, seen = Etsy(self, shop_id), [], set()
+        api = Etsy(self, shop_id)
         taxonomy = self.store.get("reference", "taxonomy", {})
         if not taxonomy or time.time() - taxonomy.get("checked", 0) > 86400:
             tree = api.request("/seller-taxonomy/nodes").get("results", [])
@@ -254,37 +272,123 @@ class Service:
             taxonomy = {"checked": time.time(), "names": names}
             self.store.put("reference", "taxonomy", taxonomy)
         sections = api.request("/shops/" + str(shop_id) + "/sections").get("results", [])
+        summaries, duplicates = {}, set()
         for state in ("active", "draft", "inactive", "expired", "sold_out"):
             offset = 0
             while True:
                 if self.stop.is_set():
                     raise ReviewError("Sync paused because the application is closing.")
                 page = api.request("/shops/" + str(shop_id) + "/listings?" + urllib.parse.urlencode({"state": state, "limit": 100, "offset": offset, "includes": "Images"}))
-                rows = page.get("results", [])
+                stats["summary_requests"] += 1
+                rows, count = page.get("results"), page.get("count")
+                if not isinstance(rows, list) or not isinstance(count, int) or count < 0 or (not rows and offset < count):
+                    raise ReviewError("Etsy returned an incomplete listing page. The previous sync is preserved; try again.")
                 for listing in rows:
                     lid = str(listing["listing_id"])
                     if str(listing.get("shop_id")) != str(shop_id):
                         raise ReviewError("Sync returned a product from a different shop.")
-                    if lid in seen:
-                        continue
-                    seen.add(lid)
-                    inventory = api.request("/listings/" + lid + "/inventory?max_variations_supported=3")
-                    listing["snapshot"] = snapshot(listing, inventory)
-                    listing["category_name"] = taxonomy.get("names", {}).get(str(listing.get("taxonomy_id")), "Other products")
-                    listings.append(listing)
-                    with self.status_lock:
-                        self.status["message"] = "Syncing " + shop["name"] + " · " + str(len(listings)) + " products"
+                    if lid in summaries:
+                        duplicates.add(lid)
+                    summaries[lid] = listing
+                stats["checked"] = len(summaries)
+                report("Checking listing summaries")
                 offset += len(rows)
-                if not rows or offset >= page.get("count", offset):
+                if offset >= count:
                     break
-        shop.update(last_sync=time.time(), sections=sections)
-        self.store.replace_shop_listings(shop_id, listings, shop)
+        removed = []
+        # A listing can move between status pages while they are being read.
+        # Reconcile missing/duplicate IDs directly; only 404/410 confirms removal.
+        for lid in sorted((set(cached) - set(summaries)) | duplicates):
+            if self.stop.is_set():
+                raise ReviewError("Sync paused because the application is closing.")
+            report("Checking a product’s current status", cached.get(lid, {}).get("title", ""))
+            try:
+                listing = api.request("/listings/" + lid + "?includes=Images")
+            except EtsyError as exc:
+                if exc.status not in (404, 410):
+                    raise
+                summaries.pop(lid, None)
+                removed.append(lid)
+                continue
+            if str(listing.get("shop_id")) != str(shop_id):
+                raise ReviewError("Sync returned a product from a different shop.")
+            summaries[lid] = listing
+        # Listing timestamps do not document an inventory-wide revision contract.
+        # Read inventories directly in batches; never infer SKU/option/price/stock
+        # equality from a listing summary. Full sync uses individual reads as an
+        # independent fallback when diagnosing batch endpoint differences.
+        inventory_ids = [lid for lid, listing in summaries.items() if listing.get("state") != "removed"]
+        inventories = {}
+        for offset in range(0, len(inventory_ids), 100):
+            if self.stop.is_set():
+                raise ReviewError("Sync paused because the application is closing.")
+            ids = inventory_ids[offset:offset+100]
+            if not full:
+                report("Checking variation inventories", total=len(inventory_ids))
+                result = api.request("/listings/batch/inventory?" + urllib.parse.urlencode({"listing_ids": ",".join(ids)}))
+                stats["inventory_requests"] += 1
+                rows = result.get("results")
+                if not isinstance(rows, list):
+                    raise ReviewError("Etsy returned incomplete inventory data. The previous sync is preserved; try again.")
+                seen = set()
+                for row in rows:
+                    lid = str(row.get("listing_id"))
+                    if lid not in ids or lid in seen or str(row.get("shop_id")) != str(shop_id):
+                        raise ReviewError("Etsy returned unexpected inventory data. The previous sync is preserved; try again.")
+                    seen.add(lid)
+                    inventories[lid] = row.get("inventory")
+                if seen != set(ids):
+                    raise ReviewError("Etsy returned incomplete inventory data. The previous sync is preserved; try again.")
+            for lid in ids:
+                # Null inventory is documented for listings never edited using
+                # Etsy inventory tools. Use the established single-listing read.
+                if full or inventories.get(lid) is None:
+                    report("Checking variation inventories", summaries[lid].get("title", ""), len(inventory_ids))
+                    inventories[lid] = api.request("/listings/" + lid + "/inventory?max_variations_supported=3")
+                    stats["inventory_requests"] += 1
+                inventory = inventories[lid]
+                if not isinstance(inventory, dict) or not isinstance(inventory.get("products"), list):
+                    raise ReviewError("Etsy returned incomplete inventory data. The previous sync is preserved; try again.")
+                stats["inventories_checked"] += 1
+            report("Checking variation inventories", total=len(inventory_ids))
+        updates = []
+        stats["checked"] = len(summaries)
+        for lid, listing in summaries.items():
+            if self.stop.is_set():
+                raise ReviewError("Sync paused because the application is closing.")
+            old = cached.get(lid)
+            if lid in inventories:
+                listing["snapshot"] = snapshot(listing, inventories[lid])
+            elif old:
+                listing["snapshot"] = {"fields": listing_fields(listing), "inventory": old["snapshot"]["inventory"]}
+            else:
+                raise ReviewError("Etsy returned a removed product without inventory history. Try syncing again.")
+            if full or not old or listing["snapshot"]["inventory"] != old.get("snapshot", {}).get("inventory"):
+                stats["refreshed"] += 1
+            else:
+                stats["reused"] += 1
+            if old and old.get("state") != listing.get("state"):
+                stats["status_changes"] += 1
+            listing["category_name"] = taxonomy.get("names", {}).get(str(listing.get("taxonomy_id")), "Other products")
+            if full or listing != old:
+                updates.append(listing)
+        stats.update(removed=len(removed), elapsed=time.time()-started, finished_at=time.time())
+        shop.update(last_sync=stats["finished_at"], last_sync_started=started, sections=sections, sync_stats=stats)
+        if full:
+            shop["last_full_sync"] = shop["last_sync"]
+        report("Saving sync results", total=len(inventory_ids))
+        self.store.commit_shop_sync(shop_id, updates, removed, shop)
 
-    def start_sync(self, shop_id=None):
+    def start_sync(self, shop_id=None, full=False):
+        if not isinstance(full, bool):
+            raise ReviewError("Choose a regular sync or a full sync.")
         def task():
             for shop in ([self.shop(shop_id)] if shop_id else self.store.all("shop")):
-                self.sync_shop(str(shop["shop_id"]))
-        self.background("Syncing products…", task)
+                current = self.shop(str(shop["shop_id"]))
+                current["next_sync"] = time.time() + int(self.store.get("setting", "sync_minutes", 15)) * 60
+                self.store.put("shop", str(shop["shop_id"]), current)
+                self.sync_shop(str(shop["shop_id"]), full=full)
+        self.background("Full shop sync…" if full else "Checking for changed products…", task)
 
     def scheduler(self):
         # One worker owns network mutations and sync; no overlapping background jobs.

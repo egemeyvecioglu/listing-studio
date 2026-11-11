@@ -49,11 +49,15 @@ def snapshot(listing, inventory):
             item = {"price": float(money(o["price"])), "quantity": int(o["quantity"]), "is_enabled": bool(o.get("is_enabled", True)), "readiness_state_id": o.get("readiness_state_id") or None}
             offerings.append(item)
         products.append({"sku": product.get("sku") or "", "property_values": sorted(props, key=lambda p: p["property_id"]), "offerings": offerings})
+    return {"fields": listing_fields(listing), "inventory": {"products": products, **{k: sorted(inventory.get(k) or []) for k in DEPENDENCIES}}}
+
+
+def listing_fields(listing):
     fields = {k: copy.deepcopy(listing.get(k, [] if k in ("tags", "materials") else "")) for k in sorted(LISTING_FIELDS)}
     for k in ("tags", "materials"):
         fields[k] = fields[k] or []
     fields["shop_section_id"] = listing.get("shop_section_id") or 0
-    return {"fields": fields, "inventory": {"products": products, **{k: sorted(inventory.get(k) or []) for k in DEPENDENCIES}}}
+    return fields
 
 
 def product_key(product):

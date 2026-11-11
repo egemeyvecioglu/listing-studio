@@ -17,6 +17,7 @@ Checked: November 4, 2026. Reference index only.
 | Create drafts and update listing fields/state | [createDraftListing](https://developers.etsy.com/documentation/reference/#operation/createDraftListing) · [updateListing](https://developers.etsy.com/documentation/reference/#operation/updateListing) |
 | Upload listing images | [uploadListingImage](https://developers.etsy.com/documentation/reference/#operation/uploadListingImage) |
 | Inventory, variations, quantities, prices and SKUs | [getListingInventory](https://developers.etsy.com/documentation/reference/#operation/getListingInventory) · [updateListingInventory](https://developers.etsy.com/documentation/reference/#operation/updateListingInventory) |
+| Batch inventory (up to 100 IDs, `listings_r`; checked November 11, 2026) | [getListingsInventoryByListingIds](https://developers.etsy.com/documentation/reference/#operation/getListingsInventoryByListingIds) · [Inventory migration](https://developer.etsy.com/documentation/tutorials/inventory-shipping-migration/) |
 | Listing lifecycle, physical/digital products, drafts, images, processing profiles and inventory | [Listings Tutorial](https://developers.etsy.com/documentation/tutorials/listings/) |
 | Official live API documentation MCP | [Dev MCP Server documentation](https://developers.etsy.com/documentation/mcp_server/devmcpserver/) |
 

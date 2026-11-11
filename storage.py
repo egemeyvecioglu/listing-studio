@@ -64,6 +64,20 @@ class Store:
                 db.execute("INSERT INTO documents VALUES ('listing',?,?)", (str(listing["listing_id"]), json.dumps(listing, ensure_ascii=False)))
             db.execute("INSERT INTO documents VALUES ('shop',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", (str(shop_id), json.dumps(shop)))
 
+    def commit_shop_sync(self, shop_id, updates, removed_ids, shop):
+        # Commit refreshed inventories, summary/status changes, confirmed removals
+        # and the checkpoint together. Unchanged inventory documents stay intact.
+        with self.lock, self.connection() as db:
+            for key in removed_ids:
+                db.execute("DELETE FROM documents WHERE kind='listing' AND id=?", (str(key),))
+                db.execute("DELETE FROM documents WHERE kind='gallery' AND id=?", (str(key),))
+            for listing in updates:
+                if str(listing["shop_id"]) != str(shop_id):
+                    raise ValueError("Sync returned a product from a different shop.")
+                db.execute("INSERT INTO documents VALUES ('listing',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", (str(listing["listing_id"]), json.dumps(listing, ensure_ascii=False)))
+                db.execute("DELETE FROM documents WHERE kind='gallery' AND id=?", (str(listing["listing_id"]),))
+            db.execute("INSERT INTO documents VALUES ('shop',?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data", (str(shop_id), json.dumps(shop)))
+
 
 class Vault:
     def __init__(self, store):
